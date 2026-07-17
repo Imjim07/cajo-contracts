@@ -332,9 +332,14 @@ describe("triggerPayout", () => {
       await f.cajo.connect(s).claimEscrowRefund(f.groupId).catch(() => {}); // slot 5 had 0 escrow
       await f.cajo.connect(s).withdraw(f.groupId);
     }
-    // Everyone contributed 500 and received 500; deposits returned in full.
-    for (const s of [f.a, f.b, f.c, f.d, f.e]) {
-      expect(await f.usdt.balanceOf(s.address)).to.equal(start[s.address]);
+// Baselines were recorded AFTER deposits were paid, so each member should
+    // end at baseline + refunded deposit. Slots: b=400, c=300, d=200, e=100, a=0.
+    const refunds: [any, bigint][] = [
+      [f.a, USDT("0")], [f.b, USDT("400")], [f.c, USDT("300")],
+      [f.d, USDT("200")], [f.e, USDT("100")],
+    ];
+    for (const [s, dep] of refunds) {
+      expect(await f.usdt.balanceOf(s.address)).to.equal(start[s.address] + dep);
     }
     // The contract must end EMPTY - no dust, no stuck funds.
     expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
