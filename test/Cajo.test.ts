@@ -237,3 +237,106 @@ describe("Cajo", () => {
     });
   });
 });
+
+// ------------------------------------------------------------------
+// triggerPayout + withdraw - full pull-pattern cycle
+// ------------------------------------------------------------------
+
+describe("triggerPayout", () => {
+  const fullRound = async (f: any) => {
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+  };
+
+  async function activeGroup() {
+    const signers = await ethers.getSigners();
+    const [a, b, c, d, e, outsider] = signers;
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy();
+    for (const s of [a, b, c, d, e, outsider]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1);
+    await cajo.connect(c).joinGroup(1, 2);
+    await cajo.connect(d).joinGroup(1, 3);
+    await cajo.connect(e).joinGroup(1, 4);
+    return { cajo, usdt, a, b, c, d, e, outsider, groupId: 1n };
+  }
+
+  it("credits the full pot to the slot-1 holder after round 1", async () => {
+    const f = await loadFixture(activeGroup);
+    await fullRound(f);
+    await expect(f.cajo.connect(f.outsider).triggerPayout(f.groupId)) // permissionless
+      .to.emit(f.cajo, "PayoutTriggered");
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("500")); // b holds slot 1
+  });
+
+  it("ATTACK: cannot trigger before every member has contributed", async () => {
+    const f = await loadFixture(activeGroup);
+    await f.cajo.connect(f.a).contribute(f.groupId);
+    await expect(f.cajo.triggerPayout(f.groupId)).to.be.revertedWithCustomError(f.cajo, "RoundIncomplete");
+  });
+
+  it("ATTACK: cannot double-trigger the same round to drain credits", async () => {
+    const f = await loadFixture(activeGroup);
+    await fullRound(f);
+    await f.cajo.triggerPayout(f.groupId);
+    // pot is now 0 and contributions reset - second call must fail
+    await expect(f.cajo.triggerPayout(f.groupId)).to.be.revertedWithCustomError(f.cajo, "RoundIncomplete");
+  });
+
+  it("advances rounds in slot order and completes after the final round", async () => {
+    const f = await loadFixture(activeGroup);
+    const order = [f.b, f.c, f.d, f.e, f.a]; // slots 1..5
+    for (let r = 0; r < 5; r++) {
+      await fullRound(f);
+      await f.cajo.triggerPayout(f.groupId);
+      expect(await f.cajo.withdrawable(f.groupId, order[r].address)).to.be.gte(USDT("500"));
+    }
+    const s = await f.cajo.getGroupStatus(f.groupId);
+    expect(s.state).to.equal(2); // Completed
+  });
+
+  it("withdraw sends exactly the credited amount and zeroes the credit", async () => {
+    const f = await loadFixture(activeGroup);
+    await fullRound(f);
+    await f.cajo.triggerPayout(f.groupId);
+    const before = await f.usdt.balanceOf(f.b.address);
+    await expect(f.cajo.connect(f.b).withdraw(f.groupId)).to.emit(f.cajo, "Withdrawn");
+    expect((await f.usdt.balanceOf(f.b.address)) - before).to.equal(USDT("500"));
+    await expect(f.cajo.connect(f.b).withdraw(f.groupId)).to.be.revertedWithCustomError(f.cajo, "NothingToWithdraw");
+  });
+
+  it("ATTACK: a stranger with no credit cannot withdraw anything", async () => {
+    const f = await loadFixture(activeGroup);
+    await fullRound(f);
+    await f.cajo.triggerPayout(f.groupId);
+    await expect(f.cajo.connect(f.outsider).withdraw(f.groupId)).to.be.revertedWithCustomError(f.cajo, "NothingToWithdraw");
+  });
+
+  it("ATTACK: escrow refund is locked until the group completes", async () => {
+    const f = await loadFixture(activeGroup);
+    await expect(f.cajo.connect(f.b).claimEscrowRefund(f.groupId)).to.be.revertedWithCustomError(f.cajo, "NotCompleted");
+  });
+
+  it("full lifecycle: everyone ends net-zero (minus nothing - no fees in v1)", async () => {
+    const f = await loadFixture(activeGroup);
+    const start: Record<string, bigint> = {};
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) start[s.address] = await f.usdt.balanceOf(s.address);
+
+    for (let r = 0; r < 5; r++) { await fullRound(f); await f.cajo.triggerPayout(f.groupId); }
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) {
+      await f.cajo.connect(s).claimEscrowRefund(f.groupId).catch(() => {}); // slot 5 had 0 escrow
+      await f.cajo.connect(s).withdraw(f.groupId);
+    }
+    // Everyone contributed 500 and received 500; deposits returned in full.
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) {
+      expect(await f.usdt.balanceOf(s.address)).to.equal(start[s.address]);
+    }
+    // The contract must end EMPTY - no dust, no stuck funds.
+    expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
+  });
+});

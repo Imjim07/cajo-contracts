@@ -66,6 +66,7 @@ contract Cajo is ReentrancyGuard {
     mapping(uint256 => Group) public groups;
     mapping(uint256 => mapping(address => Member)) public members;
     mapping(uint256 => mapping(uint16 => address)) public payoutOrder; // groupId => position => member
+    mapping(uint256 => mapping(address => uint256)) public withdrawable; // groupId => user => claimable tokens (pull pattern)
 
     // ------------------------------------------------------------------
     // Events
@@ -78,6 +79,7 @@ contract Cajo is ReentrancyGuard {
     event PayoutTriggered(uint256 indexed groupId, uint16 round, address indexed recipient, uint256 amount);
     event MemberDefaulted(uint256 indexed groupId, address indexed member, uint16 round, uint256 escrowSeized);
     event EscrowRefunded(uint256 indexed groupId, address indexed member, uint256 amount);
+    event Withdrawn(uint256 indexed groupId, address indexed member, uint256 amount);
 
     // ------------------------------------------------------------------
     // Errors
@@ -94,6 +96,9 @@ contract Cajo is ReentrancyGuard {
     error GraceNotExpired();
     error NothingToRefund();
     error ModeNotSupported();
+    error RoundIncomplete();
+    error NothingToWithdraw();
+    error NotCompleted();
 
     // ------------------------------------------------------------------
     // createGroup
@@ -226,8 +231,34 @@ contract Cajo is ReentrancyGuard {
      * payoutOrder[groupId][currentRound], marks payoutReceived, advances
      * round, resets pot + counter. Final round => Completed, refunds unlock.
      */
+    /**
+     * Permissionless: anyone may call, funds always go to the rightful
+     * slot holder. PULL PATTERN: the pot is CREDITED to the recipient's
+     * withdrawable balance - never transferred directly - so a frozen or
+     * malicious recipient can never block the group's progress.
+     */
     function triggerPayout(uint256 groupId) external nonReentrant {
-        revert("not implemented");
+        Group storage g = groups[groupId];
+        if (g.state != GroupState.Active) revert WrongState();
+        if (g.contributionsThisRound < g.memberCount) revert RoundIncomplete();
+
+        address recipient = payoutOrder[groupId][g.currentRound];
+        uint256 amount = g.potBalance;
+
+        // EFFECTS (all state updated before any value moves - CEI)
+        members[groupId][recipient].payoutReceived = true;
+        g.potBalance = 0;
+        g.contributionsThisRound = 0;
+        withdrawable[groupId][recipient] += amount;
+
+        emit PayoutTriggered(groupId, g.currentRound, recipient, amount);
+
+        if (g.currentRound == g.memberTarget) {
+            g.state = GroupState.Completed; // refunds now claimable
+        } else {
+            g.currentRound++;
+            g.roundStart = uint64(block.timestamp);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -256,7 +287,29 @@ contract Cajo is ReentrancyGuard {
      * their full escrowBalance.
      */
     function claimEscrowRefund(uint256 groupId) external nonReentrant {
-        revert("not implemented");
+        Group storage g = groups[groupId];
+        Member storage m = members[groupId][msg.sender];
+        if (g.state != GroupState.Completed) revert NotCompleted();
+        if (m.state != MemberState.Active) revert NotMember(); // defaulted members forfeited
+        uint256 amount = m.escrowBalance;
+        if (amount == 0) revert NothingToRefund();
+
+        m.escrowBalance = 0; // effect before interaction
+        withdrawable[groupId][msg.sender] += amount;
+        emit EscrowRefunded(groupId, msg.sender, amount);
+    }
+
+    /**
+     * The ONLY function that sends tokens out. Each user withdraws their
+     * own credited balance; a failed transfer (e.g. USDT-frozen address)
+     * harms only the caller and can be retried after resolution.
+     */
+    function withdraw(uint256 groupId) external nonReentrant {
+        uint256 amount = withdrawable[groupId][msg.sender];
+        if (amount == 0) revert NothingToWithdraw();
+        withdrawable[groupId][msg.sender] = 0; // effect strictly before interaction
+        groups[groupId].token.safeTransfer(msg.sender, amount);
+        emit Withdrawn(groupId, msg.sender, amount);
     }
 
     // ------------------------------------------------------------------
