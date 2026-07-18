@@ -55,6 +55,7 @@ contract Cajo is ReentrancyGuard {
         GroupState state;
         EscrowMode escrowMode;
         uint256 potBalance;         // contributions awaiting payout this round
+        uint256 dripReserve;        // seized deposits, released evenly into remaining pots
         uint16 contributionsThisRound;
     }
 
@@ -99,6 +100,7 @@ contract Cajo is ReentrancyGuard {
     error RoundIncomplete();
     error NothingToWithdraw();
     error NotCompleted();
+    error NotDefaultable();
 
     // ------------------------------------------------------------------
     // createGroup
@@ -243,7 +245,14 @@ contract Cajo is ReentrancyGuard {
         if (g.contributionsThisRound < g.memberCount) revert RoundIncomplete();
 
         address recipient = payoutOrder[groupId][g.currentRound];
-        uint256 amount = g.potBalance;
+
+        // Release the drip: seized deposits spread evenly over remaining
+        // pots (current round inclusive). Final round sweeps the remainder,
+        // so integer-division dust can never be stranded.
+        uint16 roundsRemaining = g.memberTarget - g.currentRound + 1;
+        uint256 dripShare = g.dripReserve / roundsRemaining;
+        g.dripReserve -= dripShare;
+        uint256 amount = g.potBalance + dripShare;
 
         // EFFECTS (all state updated before any value moves - CEI)
         members[groupId][recipient].payoutReceived = true;
@@ -274,8 +283,50 @@ contract Cajo is ReentrancyGuard {
      * lump to members), sets MemberState.Defaulted, forfeits prior
      * contributions.
      */
+    /**
+     * Fully trustless and cause-blind: anyone may call once the round
+     * deadline + grace period has passed for a member who hasn't paid.
+     * Default forfeits EVERYTHING - deposit and prior contributions -
+     * with no exceptions (any refund carve-out is a griefing vector).
+     *
+     * Post-collection defaulter: seized deposit exactly equals their
+     * remaining obligations; the drip keeps every future pot full-sized.
+     * Pre-collection defaulter: their unclaimed payout round is removed
+     * (gap close - everyone behind shifts up, memberTarget shrinks) and
+     * the seized deposit sweetens the remaining pots via the same drip.
+     */
     function kickDefaulter(uint256 groupId, address defaulter) external nonReentrant {
-        revert("not implemented");
+        Group storage g = groups[groupId];
+        Member storage m = members[groupId][defaulter];
+
+        if (g.state != GroupState.Active) revert WrongState();
+        if (m.state != MemberState.Active) revert NotDefaultable();
+        if (m.roundsPaid >= g.currentRound) revert NotDefaultable(); // they paid
+        if (block.timestamp <= g.roundStart + g.roundDuration + g.gracePeriod) {
+            revert GraceNotExpired();
+        }
+
+        uint256 seized = m.escrowBalance;
+        m.escrowBalance = 0;
+        m.state = MemberState.Defaulted;
+        g.memberCount--; // now counts ACTIVE members; triggerPayout gate uses it
+        g.dripReserve += seized;
+
+        if (!m.payoutReceived) {
+            // Gap close: remove their payout round. Shift everyone behind
+            // them up by one, updating BOTH books (mapping + member field)
+            // in lockstep, then shrink the target.
+            uint16 p = m.payoutPosition;
+            for (uint16 k = p; k < g.memberTarget; k++) {
+                address moved = payoutOrder[groupId][k + 1];
+                payoutOrder[groupId][k] = moved;
+                members[groupId][moved].payoutPosition = k;
+            }
+            delete payoutOrder[groupId][g.memberTarget];
+            g.memberTarget--;
+        }
+
+        emit MemberDefaulted(groupId, defaulter, g.currentRound, seized);
     }
 
     // ------------------------------------------------------------------

@@ -332,7 +332,7 @@ describe("triggerPayout", () => {
       await f.cajo.connect(s).claimEscrowRefund(f.groupId).catch(() => {}); // slot 5 had 0 escrow
       await f.cajo.connect(s).withdraw(f.groupId);
     }
-// Baselines were recorded AFTER deposits were paid, so each member should
+    // Baselines were recorded AFTER deposits were paid, so each member should
     // end at baseline + refunded deposit. Slots: b=400, c=300, d=200, e=100, a=0.
     const refunds: [any, bigint][] = [
       [f.a, USDT("0")], [f.b, USDT("400")], [f.c, USDT("300")],
@@ -342,6 +342,130 @@ describe("triggerPayout", () => {
       expect(await f.usdt.balanceOf(s.address)).to.equal(start[s.address] + dep);
     }
     // The contract must end EMPTY - no dust, no stuck funds.
+    expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
+  });
+});
+
+// ------------------------------------------------------------------
+// kickDefaulter - time-based defaults, drip, gap close
+// ------------------------------------------------------------------
+
+import { time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+
+describe("kickDefaulter", () => {
+  async function activeGroup2() {
+    const [a, b, c, d, e, outsider] = await ethers.getSigners();
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy();
+    for (const s of [a, b, c, d, e, outsider]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1); // deposit 400
+    await cajo.connect(c).joinGroup(1, 2); // deposit 300
+    await cajo.connect(d).joinGroup(1, 3); // deposit 200
+    await cajo.connect(e).joinGroup(1, 4); // deposit 100
+    return { cajo, usdt, a, b, c, d, e, outsider, groupId: 1n };
+  }
+  const pastDeadline = async () => time.increase(Number(ROUND + GRACE) + 1);
+
+  it("ATTACK: cannot kick before the grace period expires", async () => {
+    const f = await loadFixture(activeGroup2);
+    await expect(f.cajo.kickDefaulter(f.groupId, f.b.address))
+      .to.be.revertedWithCustomError(f.cajo, "GraceNotExpired");
+  });
+
+  it("ATTACK: cannot kick a member who has paid this round", async () => {
+    const f = await loadFixture(activeGroup2);
+    await f.cajo.connect(f.b).contribute(f.groupId);
+    await pastDeadline();
+    await expect(f.cajo.kickDefaulter(f.groupId, f.b.address))
+      .to.be.revertedWithCustomError(f.cajo, "NotDefaultable");
+  });
+
+  it("ATTACK: cannot kick the same defaulter twice (no double-seizure)", async () => {
+    const f = await loadFixture(activeGroup2);
+    for (const s of [f.a, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.kickDefaulter(f.groupId, f.b.address);
+    await expect(f.cajo.kickDefaulter(f.groupId, f.b.address))
+      .to.be.revertedWithCustomError(f.cajo, "NotDefaultable");
+  });
+
+  it("kicked members can no longer contribute or claim refunds", async () => {
+    const f = await loadFixture(activeGroup2);
+    for (const s of [f.a, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.kickDefaulter(f.groupId, f.b.address);
+    await expect(f.cajo.connect(f.b).contribute(f.groupId))
+      .to.be.revertedWithCustomError(f.cajo, "NotMember");
+  });
+
+  it("PRE-collection default: gap closes, positions shift up, target shrinks, deposits still fit", async () => {
+    const f = await loadFixture(activeGroup2);
+    // e (slot 4, deposit 100) never pays round 1. Others pay.
+    for (const s of [f.a, f.b, f.c, f.d]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.connect(f.outsider).kickDefaulter(f.groupId, f.e.address); // permissionless
+
+    // a held slot 5 -> shifts up to slot 4; target now 4
+    const ma = await f.cajo.members(f.groupId, f.a.address);
+    expect(ma.payoutPosition).to.equal(4);
+    expect(await f.cajo.payoutOrder(f.groupId, 4)).to.equal(f.a.address);
+    expect(await f.cajo.payoutOrder(f.groupId, 5)).to.equal(ethers.ZeroAddress);
+
+    // Deposit formula still exact for the shifted member: 100 * (4 - 4) = 0 = what a paid
+    expect(await f.cajo.slotDeposit(f.groupId, 4)).to.equal(USDT("0"));
+
+    // Round 1 pot: 4 live contributions + seized 100 spread over 4 remaining rounds (+25)
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("425"));
+  });
+
+  it("POST-collection default: drip keeps every remaining pot full-sized", async () => {
+    const f = await loadFixture(activeGroup2);
+    // Round 1: everyone pays, b (slot 1) collects 500.
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await f.cajo.triggerPayout(f.groupId);
+    // Round 2: b ghosts. Others pay. Kick b after deadline.
+    for (const s of [f.a, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.kickDefaulter(f.groupId, f.b.address); // seizes b's 400
+
+    // No gap close (b already collected): c is still slot 2, target still 5
+    expect(await f.cajo.payoutOrder(f.groupId, 2)).to.equal(f.c.address);
+
+    // Pot = 400 live + 400/4 remaining rounds = 500. Full size, nobody feels it.
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.withdrawable(f.groupId, f.c.address)).to.equal(USDT("500"));
+  });
+
+  it("lifecycle with a post-collection default conserves money and empties the contract", async () => {
+    const f = await loadFixture(activeGroup2);
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await f.cajo.triggerPayout(f.groupId);                       // b collects 500
+    for (let round = 2; round <= 5; round++) {
+      for (const s of [f.a, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+      if (round === 2) { await pastDeadline(); await f.cajo.kickDefaulter(f.groupId, f.b.address); }
+      await f.cajo.triggerPayout(f.groupId);                     // pots stay 500 via drip
+    }
+    const st = await f.cajo.getGroupStatus(f.groupId);
+    expect(st.state).to.equal(2); // Completed
+
+    for (const s of [f.a, f.c, f.d, f.e]) {
+      await f.cajo.connect(s).claimEscrowRefund(f.groupId).catch(() => {}); // a had 0 escrow
+      await f.cajo.connect(s).withdraw(f.groupId);
+    }
+    await expect(f.cajo.connect(f.b).claimEscrowRefund(f.groupId))
+      .to.be.revertedWithCustomError(f.cajo, "NotMember"); // defaulter forfeited
+
+    // b withdraws their round-1 payout credit (already theirs before defaulting)
+    await f.cajo.connect(f.b).withdraw(f.groupId);
+
+    // Contract must end EMPTY: drip fully disbursed, no stranded dust.
     expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
   });
 });
