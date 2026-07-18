@@ -15,6 +15,7 @@ const CONTRIBUTION = USDT("100");
 const MEMBERS = 5;
 const ROUND = 7n * 24n * 3600n; // 7 days
 const GRACE = 24n * 3600n;      // 24 hours
+const FILL = 30n * 24n * 3600n; // 30-day fill window
 const MODE_PUBLIC = 0;
 const MODE_FRIENDS = 1;
 
@@ -43,7 +44,7 @@ describe("Cajo", () => {
     const f = await deployFixture();
     await f.cajo
       .connect(f.a)
-      .createGroup(await f.usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 5);
+      .createGroup(await f.usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
     return { ...f, groupId: 1n };
   }
 
@@ -64,7 +65,7 @@ describe("Cajo", () => {
     it("creates a group and auto-joins the creator at their chosen slot", async () => {
       const { cajo, usdt, a } = await loadFixture(deployFixture);
       await expect(
-        cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 5)
+        cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5)
       )
         .to.emit(cajo, "GroupCreated")
         .and.to.emit(cajo, "SlotClaimed");
@@ -77,7 +78,7 @@ describe("Cajo", () => {
     it("charges the creator the slot deposit if they take an early slot", async () => {
       const { cajo, usdt, a } = await loadFixture(deployFixture);
       const before = await usdt.balanceOf(a.address);
-      await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 1);
+      await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 1);
       const after = await usdt.balanceOf(a.address);
       expect(before - after).to.equal(USDT("400")); // 100 * (5 - 1)
     });
@@ -85,7 +86,7 @@ describe("Cajo", () => {
     it("rejects Friends mode in v1", async () => {
       const { cajo, usdt, a } = await loadFixture(deployFixture);
       await expect(
-        cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_FRIENDS, 5)
+        cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_FRIENDS, 5)
       ).to.be.revertedWithCustomError(cajo, "ModeNotSupported");
     });
 
@@ -93,7 +94,7 @@ describe("Cajo", () => {
       const { cajo, usdt, a } = await loadFixture(deployFixture);
       const t = await usdt.getAddress();
       const cg = (contr: bigint, members: number, round: bigint, grace: bigint) =>
-        cajo.connect(a).createGroup(t, contr, members, round, grace, MODE_PUBLIC, 1);
+        cajo.connect(a).createGroup(t, contr, members, round, grace, FILL, MODE_PUBLIC, 1);
 
       await expect(cg(0n, MEMBERS, ROUND, GRACE)).to.be.revertedWithCustomError(cajo, "InvalidParams"); // zero contribution
       await expect(cg(CONTRIBUTION, 1, ROUND, GRACE)).to.be.revertedWithCustomError(cajo, "InvalidParams"); // 1 member
@@ -258,7 +259,7 @@ describe("triggerPayout", () => {
       await usdt.mint(s.address, USDT("10000"));
       await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
     }
-    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 5);
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
     await cajo.connect(b).joinGroup(1, 1);
     await cajo.connect(c).joinGroup(1, 2);
     await cajo.connect(d).joinGroup(1, 3);
@@ -363,7 +364,7 @@ describe("kickDefaulter", () => {
       await usdt.mint(s.address, USDT("10000"));
       await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
     }
-    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, MODE_PUBLIC, 5);
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
     await cajo.connect(b).joinGroup(1, 1); // deposit 400
     await cajo.connect(c).joinGroup(1, 2); // deposit 300
     await cajo.connect(d).joinGroup(1, 3); // deposit 200
@@ -466,6 +467,78 @@ describe("kickDefaulter", () => {
     await f.cajo.connect(f.b).withdraw(f.groupId);
 
     // Contract must end EMPTY: drip fully disbursed, no stranded dust.
+    expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
+  });
+});
+
+// ------------------------------------------------------------------
+// cancelIfUnfilled - the stuck-funds escape hatch
+// ------------------------------------------------------------------
+
+describe("cancelIfUnfilled", () => {
+  async function halfFilledGroup() {
+    const [a, b, c, d, e, outsider] = await ethers.getSigners();
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy();
+    for (const s of [a, b, c, d, e, outsider]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    // Only 3 of 5 slots ever fill: creator (slot 5, 0) + b (slot 1, 400) + c (slot 2, 300)
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1);
+    await cajo.connect(c).joinGroup(1, 2);
+    return { cajo, usdt, a, b, c, d, outsider, groupId: 1n };
+  }
+
+  it("ATTACK: nobody - creator included - can cancel before the fill deadline", async () => {
+    const f = await loadFixture(halfFilledGroup);
+    await expect(f.cajo.connect(f.a).cancelIfUnfilled(f.groupId))
+      .to.be.revertedWithCustomError(f.cajo, "FillDeadlineNotPassed");
+  });
+
+  it("after the deadline, a complete stranger can cancel", async () => {
+    const f = await loadFixture(halfFilledGroup);
+    await time.increase(Number(FILL) + 1);
+    await expect(f.cajo.connect(f.outsider).cancelIfUnfilled(f.groupId))
+      .to.emit(f.cajo, "GroupCancelled");
+  });
+
+  it("ATTACK: cannot cancel a group that filled and activated", async () => {
+    const f = await loadFixture(halfFilledGroup);
+    const [, , , , e2] = await ethers.getSigners();
+    await f.cajo.connect(f.d).joinGroup(f.groupId, 3);
+    await f.cajo.connect(e2).joinGroup(f.groupId, 4); // fills - Active
+    await time.increase(Number(FILL) + 1);
+    await expect(f.cajo.cancelIfUnfilled(f.groupId))
+      .to.be.revertedWithCustomError(f.cajo, "WrongState");
+  });
+
+  it("ATTACK: cannot join a stale Open group after its deadline (no surprise activation)", async () => {
+    const f = await loadFixture(halfFilledGroup);
+    await time.increase(Number(FILL) + 1);
+    await expect(f.cajo.connect(f.d).joinGroup(f.groupId, 3))
+      .to.be.revertedWithCustomError(f.cajo, "FillDeadlinePassed");
+  });
+
+  it("every member reclaims their exact deposit; contract ends empty", async () => {
+    const f = await loadFixture(halfFilledGroup);
+    await time.increase(Number(FILL) + 1);
+    await f.cajo.cancelIfUnfilled(f.groupId);
+
+    const bBefore = await f.usdt.balanceOf(f.b.address);
+    await f.cajo.connect(f.b).claimEscrowRefund(f.groupId);
+    await f.cajo.connect(f.b).withdraw(f.groupId);
+    expect((await f.usdt.balanceOf(f.b.address)) - bBefore).to.equal(USDT("400"));
+
+    await f.cajo.connect(f.c).claimEscrowRefund(f.groupId);
+    await f.cajo.connect(f.c).withdraw(f.groupId);
+    // creator (slot 5) had zero deposit - nothing to reclaim, correctly rejected
+    await expect(f.cajo.connect(f.a).claimEscrowRefund(f.groupId))
+      .to.be.revertedWithCustomError(f.cajo, "NothingToRefund");
+
     expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
   });
 });

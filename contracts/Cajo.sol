@@ -52,6 +52,7 @@ contract Cajo is ReentrancyGuard {
         uint64 roundDuration;       // seconds per round
         uint64 gracePeriod;         // seconds after deadline before default
         uint64 roundStart;          // timestamp current round opened
+        uint64 fillDeadline;        // Open groups must fill by this time or become cancellable
         GroupState state;
         EscrowMode escrowMode;
         uint256 potBalance;         // contributions awaiting payout this round
@@ -81,6 +82,7 @@ contract Cajo is ReentrancyGuard {
     event MemberDefaulted(uint256 indexed groupId, address indexed member, uint16 round, uint256 escrowSeized);
     event EscrowRefunded(uint256 indexed groupId, address indexed member, uint256 amount);
     event Withdrawn(uint256 indexed groupId, address indexed member, uint256 amount);
+    event GroupCancelled(uint256 indexed groupId);
 
     // ------------------------------------------------------------------
     // Errors
@@ -101,6 +103,8 @@ contract Cajo is ReentrancyGuard {
     error NothingToWithdraw();
     error NotCompleted();
     error NotDefaultable();
+    error FillDeadlinePassed();
+    error FillDeadlineNotPassed();
 
     // ------------------------------------------------------------------
     // createGroup
@@ -112,6 +116,7 @@ contract Cajo is ReentrancyGuard {
         uint16 memberTarget,
         uint64 roundDuration,
         uint64 gracePeriod,
+        uint64 fillWindow,
         EscrowMode mode,
         uint16 creatorSlot
     ) external returns (uint256 groupId) {
@@ -122,7 +127,9 @@ contract Cajo is ReentrancyGuard {
             memberTarget < 2 ||
             memberTarget > 50 ||
             roundDuration < 1 days ||
-            gracePeriod < 6 hours
+            gracePeriod < 6 hours ||
+            fillWindow < 1 hours ||
+            fillWindow > 365 days
         ) revert InvalidParams();
 
         groupId = ++groupCount;
@@ -136,6 +143,7 @@ contract Cajo is ReentrancyGuard {
         g.gracePeriod = gracePeriod;
         g.state = GroupState.Open;
         g.escrowMode = mode;
+        g.fillDeadline = uint64(block.timestamp) + fillWindow;
 
         emit GroupCreated(groupId, msg.sender, contributionAmount, memberTarget);
 
@@ -173,6 +181,7 @@ contract Cajo is ReentrancyGuard {
     function _claimSlot(uint256 groupId, address who, uint16 position) internal {
         Group storage g = groups[groupId];
         if (g.state != GroupState.Open) revert WrongState();
+        if (block.timestamp > g.fillDeadline) revert FillDeadlinePassed();
         if (members[groupId][who].state != MemberState.None) revert AlreadyJoined();
         if (position == 0 || position > g.memberTarget) revert InvalidSlot();
         if (payoutOrder[groupId][position] != address(0)) revert SlotTaken();
@@ -337,10 +346,24 @@ contract Cajo is ReentrancyGuard {
      * After GroupState.Completed, each non-defaulted member withdraws
      * their full escrowBalance.
      */
+    /**
+     * Permissionless escape hatch for groups that never filled.
+     * Time is the authority: nobody (including the creator and CAjo)
+     * can cancel before the fill deadline; after it, anyone can, because
+     * cancellation only unlocks each member's own deposit for reclaim.
+     */
+    function cancelIfUnfilled(uint256 groupId) external {
+        Group storage g = groups[groupId];
+        if (g.state != GroupState.Open) revert WrongState();
+        if (block.timestamp <= g.fillDeadline) revert FillDeadlineNotPassed();
+        g.state = GroupState.Cancelled;
+        emit GroupCancelled(groupId);
+    }
+
     function claimEscrowRefund(uint256 groupId) external nonReentrant {
         Group storage g = groups[groupId];
         Member storage m = members[groupId][msg.sender];
-        if (g.state != GroupState.Completed) revert NotCompleted();
+        if (g.state != GroupState.Completed && g.state != GroupState.Cancelled) revert NotCompleted();
         if (m.state != MemberState.Active) revert NotMember(); // defaulted members forfeited
         uint256 amount = m.escrowBalance;
         if (amount == 0) revert NothingToRefund();
