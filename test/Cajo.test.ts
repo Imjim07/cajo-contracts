@@ -28,7 +28,7 @@ describe("Cajo", () => {
     const usdt = await MockUSDT.deploy();
 
     const Cajo = await ethers.getContractFactory("Cajo");
-    const cajo = await Cajo.deploy();
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0);
 
     // Fund everyone generously and pre-approve the contract
     for (const s of [a, b, c, d, e, outsider]) {
@@ -254,7 +254,7 @@ describe("triggerPayout", () => {
     const MockUSDT = await ethers.getContractFactory("MockUSDT");
     const usdt = await MockUSDT.deploy();
     const Cajo = await ethers.getContractFactory("Cajo");
-    const cajo = await Cajo.deploy();
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0);
     for (const s of [a, b, c, d, e, outsider]) {
       await usdt.mint(s.address, USDT("10000"));
       await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
@@ -359,7 +359,7 @@ describe("kickDefaulter", () => {
     const MockUSDT = await ethers.getContractFactory("MockUSDT");
     const usdt = await MockUSDT.deploy();
     const Cajo = await ethers.getContractFactory("Cajo");
-    const cajo = await Cajo.deploy();
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0);
     for (const s of [a, b, c, d, e, outsider]) {
       await usdt.mint(s.address, USDT("10000"));
       await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
@@ -481,7 +481,7 @@ describe("cancelIfUnfilled", () => {
     const MockUSDT = await ethers.getContractFactory("MockUSDT");
     const usdt = await MockUSDT.deploy();
     const Cajo = await ethers.getContractFactory("Cajo");
-    const cajo = await Cajo.deploy();
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0);
     for (const s of [a, b, c, d, e, outsider]) {
       await usdt.mint(s.address, USDT("10000"));
       await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
@@ -539,6 +539,72 @@ describe("cancelIfUnfilled", () => {
     await expect(f.cajo.connect(f.a).claimEscrowRefund(f.groupId))
       .to.be.revertedWithCustomError(f.cajo, "NothingToRefund");
 
+    expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
+  });
+});
+
+// ------------------------------------------------------------------
+// Platform fee - immutable, capped, payout-only
+// ------------------------------------------------------------------
+
+describe("platform fee", () => {
+  async function feeGroup() {
+    const signers = await ethers.getSigners();
+    const [a, b, c, d, e] = signers;
+    const treasury = signers[10];
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy(treasury.address, 100); // 1%
+    for (const s of [a, b, c, d, e]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1);
+    await cajo.connect(c).joinGroup(1, 2);
+    await cajo.connect(d).joinGroup(1, 3);
+    await cajo.connect(e).joinGroup(1, 4);
+    return { cajo, usdt, a, b, c, d, e, treasury, groupId: 1n };
+  }
+
+  it("CONSTRUCTION ATTACK: a Cajo with a fee above 3% cannot exist", async () => {
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const [t] = await ethers.getSigners();
+    await expect(Cajo.deploy(t.address, 301)).to.be.revertedWithCustomError(Cajo, "BadConstruction");
+    await expect(Cajo.deploy(ethers.ZeroAddress, 100)).to.be.revertedWithCustomError(Cajo, "BadConstruction");
+  });
+
+  it("skims exactly 1% of the gross pot at payout - deposits and refunds untouched", async () => {
+    const f = await loadFixture(feeGroup);
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await expect(f.cajo.triggerPayout(f.groupId)).to.emit(f.cajo, "FeeAccrued");
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("495")); // 500 - 1%
+    expect(await f.cajo.withdrawable(f.groupId, f.treasury.address)).to.equal(USDT("5"));
+  });
+
+  it("the treasury collects through the same pull door as everyone else", async () => {
+    const f = await loadFixture(feeGroup);
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await f.cajo.triggerPayout(f.groupId);
+    const before = await f.usdt.balanceOf(f.treasury.address);
+    await f.cajo.connect(f.treasury).withdraw(f.groupId);
+    expect((await f.usdt.balanceOf(f.treasury.address)) - before).to.equal(USDT("5"));
+  });
+
+  it("full lifecycle with fee: members net -1% of one payout each, treasury nets 1% of all, contract empty", async () => {
+    const f = await loadFixture(feeGroup);
+    for (let r = 0; r < 5; r++) {
+      for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+      await f.cajo.triggerPayout(f.groupId);
+    }
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) {
+      await f.cajo.connect(s).claimEscrowRefund(f.groupId).catch(() => {});
+      await f.cajo.connect(s).withdraw(f.groupId);
+    }
+    await f.cajo.connect(f.treasury).withdraw(f.groupId);
+    // 5 pots x 500 x 1% = 25 total fees
+    expect(await f.usdt.balanceOf(f.treasury.address)).to.equal(USDT("25"));
     expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
   });
 });

@@ -27,6 +27,22 @@ contract Cajo is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ------------------------------------------------------------------
+    // Platform fee - immutable by design (see docs: D11)
+    // ------------------------------------------------------------------
+
+    uint16 public constant MAX_FEE_BPS = 300; // 3% - a higher-fee Cajo cannot be constructed
+    uint16 public immutable feeBps;           // set once at deployment, e.g. 100 = 1%
+    address public immutable treasury;        // collects fees via the same pull pattern as everyone
+
+    error BadConstruction();
+
+    constructor(address _treasury, uint16 _feeBps) {
+        if (_treasury == address(0) || _feeBps > MAX_FEE_BPS) revert BadConstruction();
+        treasury = _treasury;
+        feeBps = _feeBps;
+    }
+
+    // ------------------------------------------------------------------
     // Types
     // ------------------------------------------------------------------
 
@@ -57,6 +73,7 @@ contract Cajo is ReentrancyGuard {
         EscrowMode escrowMode;
         uint256 potBalance;         // contributions awaiting payout this round
         uint256 dripReserve;        // seized deposits, released evenly into remaining pots
+        uint16 feeBps;              // copied from the platform at creation; immutable for this group's life
         uint16 contributionsThisRound;
     }
 
@@ -83,6 +100,7 @@ contract Cajo is ReentrancyGuard {
     event EscrowRefunded(uint256 indexed groupId, address indexed member, uint256 amount);
     event Withdrawn(uint256 indexed groupId, address indexed member, uint256 amount);
     event GroupCancelled(uint256 indexed groupId);
+    event FeeAccrued(uint256 indexed groupId, uint16 round, uint256 amount);
 
     // ------------------------------------------------------------------
     // Errors
@@ -144,6 +162,7 @@ contract Cajo is ReentrancyGuard {
         g.state = GroupState.Open;
         g.escrowMode = mode;
         g.fillDeadline = uint64(block.timestamp) + fillWindow;
+        g.feeBps = feeBps;
 
         emit GroupCreated(groupId, msg.sender, contributionAmount, memberTarget);
 
@@ -261,13 +280,19 @@ contract Cajo is ReentrancyGuard {
         uint16 roundsRemaining = g.memberTarget - g.currentRound + 1;
         uint256 dripShare = g.dripReserve / roundsRemaining;
         g.dripReserve -= dripShare;
-        uint256 amount = g.potBalance + dripShare;
+        uint256 gross = g.potBalance + dripShare;
+        uint256 fee = (gross * g.feeBps) / 10000;
+        uint256 amount = gross - fee;
 
         // EFFECTS (all state updated before any value moves - CEI)
         members[groupId][recipient].payoutReceived = true;
         g.potBalance = 0;
         g.contributionsThisRound = 0;
         withdrawable[groupId][recipient] += amount;
+        if (fee > 0) {
+            withdrawable[groupId][treasury] += fee;
+            emit FeeAccrued(groupId, g.currentRound, fee);
+        }
 
         emit PayoutTriggered(groupId, g.currentRound, recipient, amount);
 
