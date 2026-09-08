@@ -86,6 +86,10 @@ contract Cajo is ReentrancyGuard {
     mapping(uint256 => mapping(address => Member)) public members;
     mapping(uint256 => mapping(uint16 => address)) public payoutOrder; // groupId => position => member
     mapping(uint256 => mapping(address => uint256)) public withdrawable; // groupId => user => claimable tokens (pull pattern)
+    // Step-1 shortfall ledger: how much a given round's payout was short,
+    // and who received the short pot (whom a later kick must repair first).
+    mapping(uint256 => mapping(uint16 => uint256)) public roundShortfall; // groupId => round => amount short
+    mapping(uint256 => mapping(uint16 => address)) public shortedCollector; // groupId => round => recipient owed repair
 
     // ------------------------------------------------------------------
     // Events
@@ -101,6 +105,7 @@ contract Cajo is ReentrancyGuard {
     event Withdrawn(uint256 indexed groupId, address indexed member, uint256 amount);
     event GroupCancelled(uint256 indexed groupId);
     event FeeAccrued(uint256 indexed groupId, uint16 round, uint256 amount);
+    event ShortPayout(uint256 indexed groupId, uint16 round, address indexed recipient, uint256 paid, uint256 shortBy);
 
     // ------------------------------------------------------------------
     // Errors
@@ -270,9 +275,27 @@ contract Cajo is ReentrancyGuard {
     function triggerPayout(uint256 groupId) external nonReentrant {
         Group storage g = groups[groupId];
         if (g.state != GroupState.Active) revert WrongState();
-        if (g.contributionsThisRound < g.memberCount) revert RoundIncomplete();
+
+        // A round may pay out in two situations:
+        //   (a) everyone has contributed - full pot, any time; OR
+        //   (b) the round deadline + grace has passed - fire with whatever
+        //       was collected (Option A: money never freezes). The shortfall
+        //       is recorded so a later kickDefaulter can repair the recipient.
+        bool everyonePaid = g.contributionsThisRound >= g.memberCount;
+        bool deadlinePassed = block.timestamp > g.roundStart + g.roundDuration + g.gracePeriod;
+        if (!everyonePaid && !deadlinePassed) revert RoundIncomplete();
 
         address recipient = payoutOrder[groupId][g.currentRound];
+
+        // Record any shortfall: a full pot is one contribution per active
+        // member. What actually arrived is contributionsThisRound worth.
+        uint16 missing = g.memberCount - g.contributionsThisRound; // 0 if everyone paid
+        if (missing > 0) {
+            uint256 shortBy = uint256(missing) * g.contributionAmount;
+            roundShortfall[groupId][g.currentRound] = shortBy;
+            shortedCollector[groupId][g.currentRound] = recipient;
+            emit ShortPayout(groupId, g.currentRound, recipient, g.potBalance, shortBy);
+        }
 
         // Release the drip: seized deposits spread evenly over remaining
         // pots (current round inclusive). Final round sweeps the remainder,

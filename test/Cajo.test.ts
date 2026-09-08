@@ -608,3 +608,79 @@ describe("platform fee", () => {
     expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
   });
 });
+
+// ------------------------------------------------------------------
+// STEP 1 of the freeze-bug fix (D7 Amendment 2):
+// short payout after deadline + shortfall recorded. NO repair yet.
+// ------------------------------------------------------------------
+
+describe("short payout (freeze fix, step 1)", () => {
+  async function activeGroup3() {
+    const [a, b, c, d, e, outsider] = await ethers.getSigners();
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0); // zero fee for clean math
+    for (const s of [a, b, c, d, e, outsider]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1);
+    await cajo.connect(c).joinGroup(1, 2);
+    await cajo.connect(d).joinGroup(1, 3);
+    await cajo.connect(e).joinGroup(1, 4);
+    return { cajo, usdt, a, b, c, d, e, outsider, groupId: 1n };
+  }
+  const pastDeadline = async () => time.increase(Number(ROUND + GRACE) + 1);
+
+  it("THE BUG IS GONE: a round with a no-show still pays out after the deadline", async () => {
+    const f = await loadFixture(activeGroup3);
+    // Only 4 of 5 pay (a=slot5 skips). Before the fix this would freeze forever.
+    for (const s of [f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    // Before deadline: still blocked (full pot not in, no deadline escape yet)
+    await expect(f.cajo.triggerPayout(f.groupId)).to.be.revertedWithCustomError(f.cajo, "RoundIncomplete");
+    // After deadline: fires with the short pot
+    await pastDeadline();
+    await expect(f.cajo.triggerPayout(f.groupId)).to.emit(f.cajo, "ShortPayout");
+    // Slot-1 holder b received 400 (4 contributions), not a frozen 0
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("400"));
+  });
+
+  it("records the shortfall amount and who was shorted", async () => {
+    const f = await loadFixture(activeGroup3);
+    for (const s of [f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("100")); // 1 missing * 100
+    expect(await f.cajo.shortedCollector(f.groupId, 1)).to.equal(f.b.address);
+  });
+
+  it("full round still pays a full pot and records NO shortfall", async () => {
+    const f = await loadFixture(activeGroup3);
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await f.cajo.triggerPayout(f.groupId); // no deadline needed - everyone paid
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("500"));
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(0);
+    expect(await f.cajo.shortedCollector(f.groupId, 1)).to.equal(ethers.ZeroAddress);
+  });
+
+  it("multiple no-shows in one round: shortfall scales correctly", async () => {
+    const f = await loadFixture(activeGroup3);
+    // Only 2 pay (b + c). 3 missing => short by 300, pot = 200.
+    for (const s of [f.b, f.c]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("200"));
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("300"));
+  });
+
+  it("group no longer freezes across rounds: advances after a short payout", async () => {
+    const f = await loadFixture(activeGroup3);
+    for (const s of [f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    const s = await f.cajo.getGroupStatus(f.groupId);
+    expect(s.currentRound).to.equal(2); // advanced, not stuck on round 1
+  });
+});

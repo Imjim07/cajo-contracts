@@ -63,6 +63,38 @@ toward later collectors. The residual asymmetry is accepted and DISCLOSED to
 users. Default forfeits everything — deposit and prior contributions — with no
 exceptions, because any refund carve-out is a griefing vector.
 
+### D7 — AMENDMENT 2 (2026-08-19): Option A + deposit-funded repair
+Decided but NOT YET BUILT. Closes the freeze bug found in the self-audit:
+the old rule "payout waits until every member has paid this round" can never
+be satisfied if a member stops showing up, freezing the group's funds and
+breaking D10's always-reclaimable promise.
+
+New rule (Option A): after the round deadline passes, triggerPayout fires with
+whatever was actually collected — a short pot rather than a frozen group. Money
+never freezes; a payout may occasionally be smaller than a full pot.
+
+Fairness repair: the shorted collector is not left to eat the loss. The contract
+records which round was short and by how much. When the defaulter who caused the
+shortfall is later kicked, their seized deposit FIRST tops the shorted collector
+back up to a full pot; only the remainder drips onward to remaining rounds.
+Cause and repair are matched — this is the exact purpose the reverse-risk deposit
+system was built for. Without this, the deposit system would be pointless.
+
+Confirmed sub-decisions:
+- A defaulter never collects a pot; their payout round is removed (gap close).
+- The grace period already protects honest-but-late payers from being guillotined
+  by an over-eager short payout; no extra timing guard needed.
+
+Open edge cases to resolve DURING the build (each needs a test):
+- Two members short the same round.
+- Shorted collector withdraws their partial pot before the repair arrives.
+- Group completes with a shortfall never repaired (defaulter never kicked).
+
+Build plan: three separately-tested steps —
+  (1) triggerPayout fires short + records the shortfall;
+  (2) kickDefaulter reads the record and repairs the shorted collector first;
+  (3) messy end-to-end scenarios (two defaulters, short-then-complete, withdraw-timing).
+
 ### D8 — Naira via licensed partners only
 Users fund with naira through SEC-licensed Nigerian on-ramps (converted to USDT
 before touching the contract). The contract is fiat-blind. Nigerian regulation
@@ -143,3 +175,7 @@ checks-effects-interactions ordering, pull-over-push for all outgoing value.
 - 2026-07-21 — Fill deadline + permissionless cancelIfUnfilled; stuck-funds gap closed.
 - 2026-07-21 — Immutable capped platform fee (1%, cap 3%), payout-only,
   pull-pattern treasury. Core v1 feature-complete. 43 tests green.
+
+- 2026-08-19 — Migrated dev environment to Dell OptiPlex (clone + install + 43 green).
+  Self-audit found a group-freeze bug; decided the fix (D7 Amendment 2, Option A +
+  deposit-funded repair). Spec banked; build starts next session.
