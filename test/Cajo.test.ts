@@ -780,3 +780,73 @@ describe("shortfall repair (freeze fix, step 2)", () => {
     expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("500"));
   });
 });
+
+// ------------------------------------------------------------------
+// STEP 3 of the freeze-bug fix: messy end-to-end scenarios.
+// No new contract behaviour - proving the pieces hold under pressure.
+// ------------------------------------------------------------------
+
+describe("freeze fix - messy end-to-end (step 3)", () => {
+  async function grp() {
+    const [a, b, c, d, e, outsider] = await ethers.getSigners();
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0);
+    for (const s of [a, b, c, d, e, outsider]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1); // 400
+    await cajo.connect(c).joinGroup(1, 2); // 300
+    await cajo.connect(d).joinGroup(1, 3); // 200
+    await cajo.connect(e).joinGroup(1, 4); // 100
+    return { cajo, usdt, a, b, c, d, e, outsider, groupId: 1n };
+  }
+  const advance = async () => time.increase(Number(ROUND + GRACE) + 1);
+
+  it("SCENARIO 1: a short early round, then the group still completes and empties", async () => {
+    const f = await grp();
+    for (const s of [f.a, f.b, f.c, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await advance();
+    await f.cajo.triggerPayout(f.groupId);
+    await advance();
+    await f.cajo.kickDefaulter(f.groupId, f.d.address);
+    for (let guard = 0; guard < 6; guard++) {
+      const st = await f.cajo.getGroupStatus(f.groupId);
+      if (Number(st.state) === 2) break;
+      for (const s of [f.a, f.b, f.c, f.e]) {
+        try { await f.cajo.connect(s).contribute(f.groupId); } catch {}
+      }
+      await f.cajo.triggerPayout(f.groupId);
+    }
+    const st = await f.cajo.getGroupStatus(f.groupId);
+    expect(st.state).to.equal(2);
+    for (const s of [f.a, f.b, f.c, f.e]) {
+      try { await f.cajo.connect(s).claimEscrowRefund(f.groupId); } catch {}
+      try { await f.cajo.connect(s).withdraw(f.groupId); } catch {}
+    }
+    expect(await f.usdt.balanceOf(await f.cajo.getAddress())).to.equal(0);
+  });
+
+  it("SCENARIO 3 (honest worst case): a shortfall never repaired - group still completes, never freezes", async () => {
+    const f = await grp();
+    for (const s of [f.a, f.b, f.c, f.d]) await f.cajo.connect(s).contribute(f.groupId);
+    await advance();
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("100"));
+    for (let guard = 0; guard < 6; guard++) {
+      const st = await f.cajo.getGroupStatus(f.groupId);
+      if (Number(st.state) === 2) break;
+      for (const s of [f.a, f.b, f.c, f.d]) {
+        try { await f.cajo.connect(s).contribute(f.groupId); } catch {}
+      }
+      await advance();
+      await f.cajo.triggerPayout(f.groupId);
+    }
+    const st = await f.cajo.getGroupStatus(f.groupId);
+    expect(st.state).to.equal(2);
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("100"));
+  });
+});
