@@ -1,15 +1,15 @@
-# CAjo — Architecture & Design Decisions
+# CÀjọ — Architecture & Design Decisions
 
 > The "why" behind every choice. If a decision isn't recorded here, it isn't locked.
 > Audience: future contributors, auditors, investors, and future-us at 2am.
 
-## 1. What CAjo is
+## 1. What CÀjọ is
 
 A trustless rotating savings group (Ajo / Esusu / ROSCA) on BNB Smart Chain.
-A fixed set of members contributes a fixed amount of USDT every round; each round,
-one member collects the entire pot. The smart contract replaces the traditional
-alajo (collector): it holds all funds, enforces the payout order, and punishes
-defaults automatically. CAjo (the company) never custodies user money.
+A fixed set of members contributes a fixed amount of USDT every round; each
+round one member collects the whole pot. The smart contract replaces the
+traditional alajo (collector): it holds all funds, enforces payout order, and
+punishes defaults automatically. CÀjọ (the company) never custodies user money.
 
 ## 2. Core design decisions
 
@@ -21,15 +21,14 @@ and frontend math must use 18.
 ### D2 — Non-custodial, always
 The contract holds funds; the company holds nothing. This is the legal shield —
 the line between "software company" and "unlicensed financial institution."
-Any feature requiring CAjo to hold user funds is rejected on principle. Fiat
-(naira) enters only via licensed on-ramp partners at the frontend (see D8).
+Any feature requiring CÀjọ to hold user funds is rejected on principle. Fiat
+(naira) enters only via licensed on-ramp partners at the frontend (D8).
 
 ### D3 — Reverse-risk slot deposits (public mode)
 The member who collects FIRST has the most incentive to vanish (holds everyone's
-money, still owes the most rounds). Sliding/installment escrow under-collateralizes
-early positions (the "early-payout attack"). Solution: each payout position is a
-slot with an upfront deposit equal to what that member will still owe after
-collecting:
+money, still owes the most rounds). Installment escrow under-collateralizes early
+positions. Solution: each payout position is a slot with an upfront deposit equal
+to what that member will still owe after collecting:
     deposit(position) = contributionAmount × (memberTarget − position)
 Position 1 locks the most; the last position locks 0. Refunded at completion,
 seized on default. Bonus: patient savers get a near-zero-deposit experience.
@@ -55,88 +54,110 @@ it shrinks future pots and punishes patient members.)
 Pre-collection default: the defaulter's payout round is removed (gap close;
 everyone behind shifts up; memberTarget shrinks). Post-collection default: cycle
 length unchanged, drip covers their missing shares.
-AMENDMENT (fairness): the group in aggregate loses nothing — the defaulter's
-forfeiture funds all survivor outcomes. But the benefit skews toward members who
-collected BEFORE the default (their windfall is already disbursed and
+
+**AMENDMENT 1 (fairness):** the group in aggregate loses nothing — the
+defaulter's forfeiture funds all survivor outcomes. But the benefit skews toward
+members who collected BEFORE the default (their windfall is already disbursed and
 unrecoverable). Seized deposits drip into remaining pots to partially rebalance
 toward later collectors. The residual asymmetry is accepted and DISCLOSED to
 users. Default forfeits everything — deposit and prior contributions — with no
 exceptions, because any refund carve-out is a griefing vector.
 
-### D7 — AMENDMENT 2 (2026-08-19): Option A + deposit-funded repair
-Decided but NOT YET BUILT. Closes the freeze bug found in the self-audit:
-the old rule "payout waits until every member has paid this round" can never
-be satisfied if a member stops showing up, freezing the group's funds and
-breaking D10's always-reclaimable promise.
+**AMENDMENT 2 (Option A + deposit-funded repair):** the old rule "payout waits
+until every member has paid this round" could never be satisfied if a member
+stopped showing up — freezing funds and breaking D10. New rule (Option A): after
+the round deadline + grace passes, triggerPayout fires with whatever was
+collected (a short pot rather than a frozen group). The contract records which
+round was short and who received the short pot. When the causing defaulter is
+later kicked, their seized deposit FIRST tops the shorted collector back up to a
+full pot (credited to their withdrawable balance — pull pattern, so it works even
+if they already withdrew the short pot); only the remainder drips onward.
+Confirmed sub-decisions: a defaulter never collects a pot; the grace period
+already protects honest-but-late payers; a short payout fires no matter how small
+(Choice A — always pay).
 
-New rule (Option A): after the round deadline passes, triggerPayout fires with
-whatever was actually collected — a short pot rather than a frozen group. Money
-never freezes; a payout may occasionally be smaller than a full pot.
-
-Fairness repair: the shorted collector is not left to eat the loss. The contract
-records which round was short and by how much. When the defaulter who caused the
-shortfall is later kicked, their seized deposit FIRST tops the shorted collector
-back up to a full pot; only the remainder drips onward to remaining rounds.
-Cause and repair are matched — this is the exact purpose the reverse-risk deposit
-system was built for. Without this, the deposit system would be pointless.
-
-Confirmed sub-decisions:
-- A defaulter never collects a pot; their payout round is removed (gap close).
-- The grace period already protects honest-but-late payers from being guillotined
-  by an over-eager short payout; no extra timing guard needed.
-
-Open edge cases to resolve DURING the build (each needs a test):
-- Two members short the same round.
-- Shorted collector withdraws their partial pot before the repair arrives.
-- Group completes with a shortfall never repaired (defaulter never kicked).
-
-Build plan: three separately-tested steps —
-  (1) triggerPayout fires short + records the shortfall;
-  (2) kickDefaulter reads the record and repairs the shorted collector first;
-  (3) messy end-to-end scenarios (two defaulters, short-then-complete, withdraw-timing).
+**AMENDMENT 3 (multi-default repair order):** when multiple shortfalls exist and
+seized deposits can't make everyone whole, repair in ROUND ORDER (earliest first),
+each shortfall filled fully before the next, stopping when seized runs out;
+remainder drips. In a multi-default collapse the math may NOT make everyone whole
+— ACCEPTED and DISCLOSED. The contract's job is to distribute the wreckage fairly
+and NEVER FREEZE, not to conjure money that has left the building.
 
 ### D8 — Naira via licensed partners only
 Users fund with naira through SEC-licensed Nigerian on-ramps (converted to USDT
 before touching the contract). The contract is fiat-blind. Nigerian regulation
 (ISA 2025, VASP licensing, crypto taxation from Jan 2026) requires a fintech-
-lawyer review before mainnet launch to Nigerian users. A launch gate, not a
-suggestion. Price-locking currencies is REJECTED (see D9) — it is an FX
-derivative, not a savings feature; USDT already provides dollar stability.
+lawyer review before mainnet launch to Nigerian users — a launch gate, not a
+suggestion. Price-locking currencies is REJECTED: it is an FX derivative, not a
+savings feature; USDT already provides dollar stability.
 
 ### D9 — Deliberate v1 exclusions (roadmap, not scope)
 - Friends mode (v2): approval-gated traditional groups.
-- Beneficiary system (v2): contributeFor() + payout redirection so a family can
-  keep a deceased member's slot alive. The naive "beneficiary address only"
-  version protects nobody and isn't worth shipping.
+- Beneficiary system (v2): keep a deceased member's slot alive. The naive
+  "beneficiary address only" version protects nobody and isn't worth shipping.
 - Prepayment / scheduled auto-debit (v2): useful for travelers, but requires
-  either custody (voids D2) or a keeper with fund permissions (voids D10), plus
-  a refund path for prepaid rounds in cancelled groups. Trustless version uses
-  token approvals; deferred until the core is proven.
+  either custody (voids D2) or a keeper with fund permissions (voids D10), plus a
+  refund path for prepaid rounds in cancelled groups. Trustless version uses token
+  approvals; deferred until the core is proven.
 - Price-locked / multi-currency pots, personal savings accounts: different
   companies, different licenses. Vision, not v1.
 
 ### D10 — Time is the only authority
 No admin keys exist anywhere in the protocol. Every enforcement action
-(kickDefaulter, cancelIfUnfilled) is permissionless and gated by deadlines
-alone — actions that can only help members need conditions, not gatekeepers,
-and any CAjo power over funds would void D2. Groups get a fill deadline at
-creation; before it nobody (creator or CAjo) can cancel, and after it anyone
-can cancel an unfilled group, which only unlocks each member's own deposit for
-reclaim. Joining is blocked past the deadline (no surprise activation).
-Unclaimed balances remain claimable FOREVER; nothing ever escheats to the
-platform. (A platform that can confiscate or expire user funds is, by
-definition, the rug-pull risk users fear — CAjo is architecturally incapable
-of it.)
+(kickDefaulter, cancelIfUnfilled) is permissionless and gated by deadlines alone.
+Groups get a fill deadline at creation; before it nobody (creator or CÀjọ) can
+cancel, and after it anyone can cancel an unfilled group, which only unlocks each
+member's own deposit for reclaim. Joining is blocked past the deadline (no
+surprise activation). Unclaimed balances remain claimable FOREVER; nothing ever
+escheats to the platform. A platform that can confiscate or expire user funds is,
+by definition, the rug-pull risk users fear — CÀjọ is architecturally incapable
+of it.
 
 ### D11 — The platform fee cannot become a weapon
 Fee is set once at deployment and is immutable — no function can change it.
-Hard-capped at 3% by a compile-time constant: a higher-fee Cajo cannot be
+Hard-capped at 3% by a compile-time constant: a higher-fee CÀjọ cannot be
 constructed. Charged on payouts only — never deposits or refunds. Each group
 locks its fee at creation, so running groups are never affected by a later
 version. The treasury collects via the same pull-pattern withdraw() as members;
 no privileged transfer path. Changing the fee means deploying a new public
 contract; existing groups are untouchable. Launch fee: 1% (vs. 2–5% for a Lagos
 alajo).
+
+### D12 — Seized funds are handled by code alone, never by discretion
+A defaulter's seized deposit is distributed BY FORMULA: it first repairs any
+shorted collector (D7 Amendment 2), then drips into remaining pots. It flows
+SIDEWAYS to the wronged members — never up to CÀjọ, never back to the defaulter.
+REJECTED: support-ticket reclaim of seized funds. Any human deciding whether to
+return seized money makes CÀjọ a custodian and adjudicator — the exact custody
+role D2 forbids, requiring licenses, inviting fraud (unverifiable sob-story
+tickets), and breaking trustlessness. Seizure is final because "final" is the
+only thing strangers can trust. Mercy belongs in the RULES (grace periods, round
+settings, Friends-mode leniency) BEFORE seizure — never in enforcement AFTER it.
+
+### D13 — Unstable-income accommodation (rules-level, not enforcement-level)
+CÀjọ will document guidance and/or a preset for groups serving members with
+irregular income: longer grace periods and round durations chosen at creation.
+Mercy expressed in the RULES a group opts into up front — NOT a discretionary
+exception to seizure. The code still enforces strictly once a deadline+grace
+passes; the leniency is that the group chose gentle deadlines to begin with.
+(v1 = guidance; a formal preset is a v2 consideration.)
+
+### D14 — Forgiveness mechanics deferred to v2
+The honest-but-broke member (paid earlier rounds, misses one, loses forfeited
+contributions + deposit) is a real tension. A "one free miss" / late-top-up /
+group-vote-to-forgive mechanic is v2, not v1, because it adds attack surface
+(abuse of the free miss, who funds the forgiven round's gap). Priority: fix
+CORRECTNESS (the freeze bug) before adding KINDNESS.
+
+### D15 — Zero-deposit / multi-identity attacks are an identity-layer problem
+The last slot correctly locks ZERO deposit (nothing to insure). Forcing a deposit
+there is rejected: it charges insurance on a non-existent risk and punishes the
+fairest position. A pre-collection zero-deposit defaulter still forfeits their
+PAID contributions (already in prior pots), so the group stays whole. The
+Sybil/two-account attack (one person takes slot 5 + a real slot for a free
+disruption lever) is a FRONTEND/IDENTITY problem (KYC, wallet-identity binding),
+unsolvable in Solidity on a permissionless chain. Flagged for launch-phase, NOT
+patched in the contract.
 
 ## 3. Contract map
 
@@ -145,16 +166,16 @@ alajo).
     ├─ createGroup(...)                  — creator claims a slot + pays its deposit
     ├─ joinGroup(groupId, position)      — pay slot deposit, claim position
     ├─ contribute(groupId)               — pay this round's contribution
-    ├─ triggerPayout(groupId)            — credit pot (minus fee, plus drip) to slot holder
-    ├─ kickDefaulter(groupId, member)    — time-based; gap-close or drip
+    ├─ triggerPayout(groupId)            — full pot OR short pot after deadline; records shortfall
+    ├─ kickDefaulter(groupId, member)    — time-based; repairs shorted collectors first, then gap-close/drip
     ├─ cancelIfUnfilled(groupId)         — permissionless after fill deadline
     ├─ claimEscrowRefund(groupId)        — after Completed OR Cancelled; credits withdrawable
     ├─ withdraw(groupId)                 — the ONLY token-out door; pays msg.sender only
-    └─ views: slotDeposit, openSlots, getGroupStatus
+    └─ views: slotDeposit, openSlots, getGroupStatus, roundShortfall, shortedCollector
 
-Security primitives: OpenZeppelin SafeERC20 (USDT's non-standard returns),
-ReentrancyGuard on every state-changing function, custom errors, strict
-checks-effects-interactions ordering, pull-over-push for all outgoing value.
+Security primitives: OpenZeppelin SafeERC20, ReentrancyGuard on every
+state-changing function, custom errors, strict checks-effects-interactions
+ordering, pull-over-push for all outgoing value. Compiled with viaIR.
 
 ## 4. Invariants (tested)
 
@@ -164,18 +185,18 @@ checks-effects-interactions ordering, pull-over-push for all outgoing value.
 4. only EscrowMode.Public groups can be created (v1)
 5. every completed or cancelled lifecycle ends with the contract holding exactly 0
 6. platform fee never exceeds MAX_FEE_BPS and is charged only at payout
+7. a round never freezes: after deadline+grace it pays out whatever was collected
+8. a shorted collector is repaired first from seized deposits, in round order
 
 ## 5. Build log
 
-- 2026-07-12 — Contract skeleton; createGroup/joinGroup/contribute; reverse-risk
-  slot deposits (closes early-payout attack); EscrowMode reserved; Hardhat +
-  19-test suite; compiles on solc 0.8.24; repo pushed.
-- 2026-07-21 — triggerPayout + withdraw (pull pattern); claimEscrowRefund.
-- 2026-07-21 — kickDefaulter with gap-close + unified drip reserve; viaIR enabled.
-- 2026-07-21 — Fill deadline + permissionless cancelIfUnfilled; stuck-funds gap closed.
-- 2026-07-21 — Immutable capped platform fee (1%, cap 3%), payout-only,
-  pull-pattern treasury. Core v1 feature-complete. 43 tests green.
-
-- 2026-08-19 — Migrated dev environment to Dell OptiPlex (clone + install + 43 green).
-  Self-audit found a group-freeze bug; decided the fix (D7 Amendment 2, Option A +
-  deposit-funded repair). Spec banked; build starts next session.
+- Contract skeleton; createGroup/joinGroup/contribute; reverse-risk slot deposits
+  (closes early-payout attack); EscrowMode reserved; Hardhat + 19-test suite.
+- triggerPayout + withdraw (pull pattern); claimEscrowRefund.
+- kickDefaulter with gap-close + unified drip reserve; viaIR enabled.
+- Fill deadline + permissionless cancelIfUnfilled; stuck-funds gap closed.
+- Immutable capped platform fee (1%, cap 3%), payout-only, pull-pattern treasury.
+- Dev environment migrated to Dell OptiPlex (clone + install + green).
+- Self-audit found a group-freeze bug. Fixed in 3 tested steps: (1) short payout
+  records shortfall; (2) seized deposit repairs shorted collector first; (3) messy
+  end-to-end scenarios (short-then-complete, never-repaired worst case). 54 tests green.
