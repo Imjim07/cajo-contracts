@@ -106,6 +106,7 @@ contract Cajo is ReentrancyGuard {
     event GroupCancelled(uint256 indexed groupId);
     event FeeAccrued(uint256 indexed groupId, uint16 round, uint256 amount);
     event ShortPayout(uint256 indexed groupId, uint16 round, address indexed recipient, uint256 paid, uint256 shortBy);
+    event ShortfallRepaired(uint256 indexed groupId, uint16 round, address indexed collector, uint256 amount);
 
     // ------------------------------------------------------------------
     // Errors
@@ -367,7 +368,27 @@ contract Cajo is ReentrancyGuard {
         m.escrowBalance = 0;
         m.state = MemberState.Defaulted;
         g.memberCount--; // now counts ACTIVE members; triggerPayout gate uses it
-        g.dripReserve += seized;
+
+        // REPAIR FIRST (D7 Amendment 2 & 3): before the seized deposit drips
+        // evenly, use it to make whole any collector who received a SHORT pot
+        // in an earlier round. Repair in round order (earliest first); pay each
+        // shortfall fully before the next; stop when seized runs out. Repairs
+        // are CREDITED to the collector's withdrawable balance (pull pattern),
+        // so it does not matter whether they already withdrew their short pot.
+        uint256 remaining = seized;
+        for (uint16 r = 1; r <= g.currentRound && remaining > 0; r++) {
+            uint256 owed = roundShortfall[groupId][r];
+            if (owed == 0) continue;
+            address collector = shortedCollector[groupId][r];
+            uint256 pay = owed <= remaining ? owed : remaining;
+            roundShortfall[groupId][r] = owed - pay; // partial repair leaves the rest recorded
+            remaining -= pay;
+            withdrawable[groupId][collector] += pay;
+            emit ShortfallRepaired(groupId, r, collector, pay);
+        }
+
+        // Whatever is left after repairs drips evenly into remaining pots.
+        g.dripReserve += remaining;
 
         if (!m.payoutReceived) {
             // Gap close: remove their payout round. Shift everyone behind

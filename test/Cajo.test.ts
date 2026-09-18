@@ -684,3 +684,99 @@ describe("short payout (freeze fix, step 1)", () => {
     expect(s.currentRound).to.equal(2); // advanced, not stuck on round 1
   });
 });
+
+// ------------------------------------------------------------------
+// STEP 2 of the freeze-bug fix (D7 Amendment 2 & 3):
+// seized deposit repairs shorted collectors FIRST, then drips remainder.
+// ------------------------------------------------------------------
+
+describe("shortfall repair (freeze fix, step 2)", () => {
+  async function grp() {
+    const [a, b, c, d, e, outsider] = await ethers.getSigners();
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const usdt = await MockUSDT.deploy();
+    const Cajo = await ethers.getContractFactory("Cajo");
+    const cajo = await Cajo.deploy((await ethers.getSigners())[10].address, 0);
+    for (const s of [a, b, c, d, e, outsider]) {
+      await usdt.mint(s.address, USDT("10000"));
+      await usdt.connect(s).approve(await cajo.getAddress(), USDT("10000"));
+    }
+    await cajo.connect(a).createGroup(await usdt.getAddress(), CONTRIBUTION, MEMBERS, ROUND, GRACE, FILL, MODE_PUBLIC, 5);
+    await cajo.connect(b).joinGroup(1, 1); // 400 deposit
+    await cajo.connect(c).joinGroup(1, 2); // 300
+    await cajo.connect(d).joinGroup(1, 3); // 200
+    await cajo.connect(e).joinGroup(1, 4); // 100
+    return { cajo, usdt, a, b, c, d, e, outsider, groupId: 1n };
+  }
+  const pastDeadline = async () => time.increase(Number(ROUND + GRACE) + 1);
+
+  it("repairs the shorted collector from the defaulter's seized deposit", async () => {
+    const f = await grp();
+    // Round 1: d (slot 3, deposit 200) skips. b collects short pot of 400.
+    for (const s of [f.a, f.b, f.c, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("400")); // short
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("100"));
+
+    // Kick d: 200 seized. 100 repairs b (up to full 500), 100 left to drip.
+    await pastDeadline(); // round advanced after payout; clear grace again before kicking
+    await expect(f.cajo.kickDefaulter(f.groupId, f.d.address)).to.emit(f.cajo, "ShortfallRepaired");
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("500")); // repaired
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(0); // fully repaired
+  });
+
+  it("WITHDRAW-TIMING EDGE: repair still reaches a collector who already withdrew the short pot", async () => {
+    const f = await grp();
+    for (const s of [f.a, f.b, f.c, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    // b withdraws the short 400 BEFORE any repair exists
+    await f.cajo.connect(f.b).withdraw(f.groupId);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(0);
+
+    // Now d is kicked; repair is credited fresh - b can withdraw it separately
+    await pastDeadline();
+    await f.cajo.kickDefaulter(f.groupId, f.d.address);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("100"));
+    await f.cajo.connect(f.b).withdraw(f.groupId);
+    // b's wallet: started 10000, paid 400 deposit + 100 contribution = 9500, got 400 + 100 = 10000
+    expect(await f.usdt.balanceOf(f.b.address)).to.equal(USDT("10000"));
+  });
+
+  it("PARTIAL repair: a small seized deposit only partly fills a big shortfall, rest stays recorded", async () => {
+    const f = await grp();
+    // Round 1: THREE skip (c, d, e). Only a + b pay. b collects 200, short by 300.
+    for (const s of [f.a, f.b]) await f.cajo.connect(s).contribute(f.groupId);
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("300"));
+
+    // Kick e (slot 4, deposit only 100). Repairs 100 of the 300; 200 still owed.
+    await pastDeadline();
+    await f.cajo.kickDefaulter(f.groupId, f.e.address);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("300")); // 200 pot + 100 repair
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(USDT("200")); // remainder still recorded
+
+    // Kick d (deposit 200). Finishes the repair: b reaches full 500.
+    await f.cajo.kickDefaulter(f.groupId, f.d.address);
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("500"));
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(0);
+  });
+
+  it("a full (non-short) round records nothing for repair to act on", async () => {
+    const f = await grp();
+    for (const s of [f.a, f.b, f.c, f.d, f.e]) await f.cajo.connect(s).contribute(f.groupId);
+    await f.cajo.triggerPayout(f.groupId);
+    expect(await f.cajo.roundShortfall(f.groupId, 1)).to.equal(0);
+    // Round 2: e skips, gets kicked - but round 1 had no shortfall to repair
+    for (const s of [f.a, f.c, f.d]) await f.cajo.connect(s).contribute(f.groupId);
+    // c is slot 2, collects round 2 (short). b already collected round 1 full.
+    await pastDeadline();
+    await f.cajo.triggerPayout(f.groupId);
+    await pastDeadline();
+    await f.cajo.kickDefaulter(f.groupId, f.e.address);
+    // b's round-1 pot was full; only c's round-2 shortfall should ever be repaired
+    expect(await f.cajo.withdrawable(f.groupId, f.b.address)).to.equal(USDT("500"));
+  });
+});
