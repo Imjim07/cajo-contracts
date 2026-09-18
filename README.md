@@ -1,30 +1,105 @@
-# CAjo Contracts - v1
+# CÀjọ
 
-Trustless rotating savings (Ajo/ROSCA) on BNB Smart Chain. USDT BEP-20, non-custodial,
-reverse-risk slot deposits (public mode only in v1).
+**A trustless rotating savings protocol (Ajo / Esusu / ROSCA) on BNB Smart Chain.**
 
-## Setup (local)
+CÀjọ puts the traditional West African savings circle on-chain. A fixed group of
+members contributes a set amount of USDT each round; every round, one member
+collects the whole pot, rotating until everyone has collected once. The smart
+contract replaces the human collector (*alajo*): it holds all funds, enforces the
+payout order, and handles defaults automatically — with no admin, no custody, and
+no one who can freeze or seize members' money by decree.
+
+---
+
+## ⚠️ Project status
+
+**Feature-complete and self-audited — NOT yet deployed or independently audited.**
+
+This is an actively developed portfolio and learning project. The core protocol is
+implemented and covered by a comprehensive test suite (54 passing tests, including
+adversarial/attack scenarios). It has **not** undergone a professional third-party
+security audit and is **not** deployed to any mainnet. **Do not use it with real
+funds.** A professional audit and legal review are prerequisites before any mainnet
+launch.
+
+---
+
+## Why it's interesting
+
+- **Non-custodial by design.** The contract holds funds; the operator holds nothing
+  and has no key that can move user money. This is a deliberate architectural
+  choice, not an afterthought — it's what separates a savings tool from a
+  custodial risk.
+- **Reverse-risk collateral.** The member who collects earliest (and therefore has
+  the most incentive to walk away) must lock the largest security deposit; the last
+  collector locks none. Risk and collateral mirror each other exactly, closing the
+  classic ROSCA "early-payout" failure mode.
+- **No admin, no gatekeepers.** Every enforcement action — kicking a defaulter,
+  cancelling a group that never filled — is permissionless and gated purely by
+  time. Unclaimed funds remain claimable forever; nothing ever escheats to the
+  platform.
+- **Fee that can't become a weapon.** The platform fee is immutable, hard-capped in
+  the bytecode itself (a higher-fee contract literally cannot be constructed), and
+  charged only on payouts.
+
+## Engineering highlights
+
+- **Adversarial testing.** The suite doesn't just prove the happy path — it proves
+  the contract *rejects* attacks: double-joining, double-contributing, claiming
+  taken slots, kicking members early, draining via double-triggered payouts, and
+  more.
+- **Self-audit.** A structured self-audit uncovered a fund-freezing bug (a round
+  could become permanently unpayable if a member stopped contributing). It was
+  fixed in three separately-tested stages and is now covered by end-to-end
+  scenarios including the honest worst case.
+- **Documented decisions.** Every non-obvious design choice — and every rejected
+  alternative — is recorded with its reasoning in
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Fifteen decisions, three
+  amendments, eight tested invariants.
+- **Money-conservation invariant.** Every full lifecycle test asserts the contract
+  ends holding exactly zero — no dust, no stranded funds.
+
+## Tech stack
+
+Solidity `0.8.24` · Hardhat · TypeScript tests · OpenZeppelin (SafeERC20,
+ReentrancyGuard) · viaIR compilation · BNB Smart Chain (USDT BEP-20).
+
+## Running it locally
+
+Requires Node.js (LTS) and npm.
+
 ```bash
+git clone https://github.com/Imjim07/cajo-contracts.git
+cd cajo-contracts
 npm install
-npx hardhat compile
 npx hardhat test
 ```
 
-## Layout
-- `contracts/Cajo.sol` - main contract. createGroup/joinGroup/contribute implemented;
-  triggerPayout/kickDefaulter/claimEscrowRefund are specified stubs (next milestone).
-- `contracts/MockUSDT.sol` - test-only token (18 decimals, matching BSC USDT).
-- `test/Cajo.test.ts` - 18 tests incl. attack scenarios. All must pass before any new code.
+You should see all tests pass. The test suite is the best documentation of how the
+protocol behaves — start there.
 
-## Locked design decisions
-1. Reverse-risk slot deposits: deposit(position) = contribution x (members - position),
-   paid upfront at join, refunded at completion, seized on default.
-2. Seized deposits DRIP into the pot round by round (pots never shrink).
-3. Cycle shortens only when a pre-collection member defaults (their payout round is removed;
-   group loses nothing, defaulter forfeits everything).
-4. EscrowMode enum present now; Friends mode rejected until v2.
-5. Fiat (naira) enters via licensed on-ramp partners at the frontend layer only.
-   The contract never touches fiat. Legal review required before mainnet with NG users.
+## Architecture
 
-## Deploy (testnet, later)
-BSC testnet config is in hardhat.config.ts - set DEPLOYER_KEY env var. Never commit keys.
+The full design rationale lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+In brief: a single `Cajo.sol` contract manages group lifecycles (create → join →
+contribute → payout → complete), with all outgoing value flowing through one
+audited pull-pattern `withdraw()` function. Defaults are handled by seizing a
+defaulter's deposit and using it first to repair anyone who received a short
+payout, then distributing the remainder.
+
+## Roadmap
+
+- Third-party security audit and legal review (pre-maincondition for mainnet)
+- BSC testnet deployment
+- Frontend dApp (React + TypeScript, wallet integration)
+- Friends mode (lighter-collateral groups for members who know each other)
+- Fiat on-ramp via licensed partners
+
+## License
+
+MIT
+
+---
+
+*Built by Yeh(https://github.com/Imjim07) as a study in trustless financial
+protocol design.*
