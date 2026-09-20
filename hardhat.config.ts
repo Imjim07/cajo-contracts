@@ -1,5 +1,7 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import * as dotenv from "dotenv";
+dotenv.config();
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -9,9 +11,16 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {},
     bscTestnet: {
-      url: "https://data-seed-prebsc-1-s1.binance.org:8545",
+      url: process.env.BSC_TESTNET_RPC || "https://bsc-testnet-rpc.publicnode.com",
+      chainId: 97,
       accounts: process.env.DEPLOYER_KEY ? [process.env.DEPLOYER_KEY] : [],
     },
+  },
+  etherscan: {
+    apiKey: process.env.BSCSCAN_API_KEY || "",
+  },
+  sourcify: {
+    enabled: false,
   },
 };
 

@@ -1,3 +1,15 @@
+## 🟢 Live on BSC Testnet
+
+CÀjọ is deployed and **source-verified** on BNB Smart Chain Testnet:
+
+- **Contract:** [`0xc9d30A50579Fbd7aEDb48a4E7F02Eab56C3298b4`](https://testnet.bscscan.com/address/0xc9d30A50579Fbd7aEDb48a4E7F02Eab56C3298b4#code)
+- **Network:** BSC Testnet (Chain ID 97)
+- Source code is publicly verified — read it directly on BscScan.
+
+> Testnet only. Not deployed to mainnet, not independently audited. Do not use with real funds.
+
+
+
 # CÀjọ
 
 **A trustless rotating savings protocol (Ajo / Esusu / ROSCA) on BNB Smart Chain.**
@@ -90,7 +102,7 @@ payout, then distributing the remainder.
 ## Roadmap
 
 - Third-party security audit and legal review (pre-maincondition for mainnet)
-- BSC testnet deployment
+- .....checked.....BSC testnet deployment
 - Frontend dApp (React + TypeScript, wallet integration)
 - Friends mode (lighter-collateral groups for members who know each other)
 - Fiat on-ramp via licensed partners
