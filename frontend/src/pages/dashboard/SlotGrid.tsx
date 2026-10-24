@@ -7,9 +7,11 @@ interface SlotGridProps {
   token: TokenInfo;
   slots: SlotInfo[];
   account: string | null;
+  /** Shown on open slots while the group is Open. */
+  onJoin?: (position: number) => void;
 }
 
-export function SlotGrid({ group, token, slots, account }: SlotGridProps) {
+export function SlotGrid({ group, token, slots, account, onJoin }: SlotGridProps) {
   const isActive = group.state === 'Active';
 
   if (slots.length === 0) return <p className="muted">This group has no slots.</p>;
@@ -49,6 +51,10 @@ export function SlotGrid({ group, token, slots, account }: SlotGridProps) {
                     )}
                   </div>
                 </>
+              ) : onJoin && !slot.taken ? (
+                <button type="button" className="btn btn-secondary btn-sm btn-block" onClick={() => onJoin(slot.position)}>
+                  Join slot {slot.position}
+                </button>
               ) : (
                 <p className="slot-empty">{slot.taken ? 'Holder unavailable' : 'No holder yet'}</p>
               )}

@@ -20,4 +20,10 @@ export const CAJO_ABI: InterfaceAbi = cajoAbi;
 export const ERC20_ABI: InterfaceAbi = [
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  // OpenZeppelin v5 token errors, so reverts bubbled up from the token can be decoded.
+  'error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed)',
+  'error ERC20InsufficientAllowance(address spender, uint256 allowance, uint256 needed)',
 ];

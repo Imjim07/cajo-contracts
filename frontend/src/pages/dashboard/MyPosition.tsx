@@ -34,7 +34,7 @@ export function MyPosition({ group, token }: MyPositionProps) {
   } else if (!account) {
     body = (
       <>
-        <p className="muted">Connect a wallet to see your slot in this group. Nothing is signed or sent.</p>
+        <p className="muted">Connect a wallet to see your slot in this group. Connecting doesn't sign anything.</p>
         <WalletButton />
       </>
     );

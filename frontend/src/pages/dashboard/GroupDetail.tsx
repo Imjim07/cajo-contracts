@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { AddressDisplay } from '../../components/AddressDisplay';
 import { ErrorState, Skeleton, StaleNotice } from '../../components/Feedback';
 import { StatusBadge } from '../../components/StatusBadge';
@@ -9,6 +9,7 @@ import { formatBps, formatDuration, formatTokenAmount } from '../../lib/format';
 import type { GroupRecord, TokenInfo } from '../../types/cajo';
 import { useWallet } from '../../useWallet';
 import { GroupTimeline } from './GroupTimeline';
+import { JoinSlotDialog } from './JoinSlotDialog';
 import { MyPosition } from './MyPosition';
 import { SlotGrid } from './SlotGrid';
 
@@ -67,6 +68,8 @@ export function GroupDetail({ idParam }: { idParam: string }) {
   );
   const detail = usePolledResource(id === null ? null : `detail:${id}`, fetcher, POLL_INTERVAL_MS);
   const result = detail.data;
+  const [joinPosition, setJoinPosition] = useState<number | null>(null);
+  const closeJoin = useCallback(() => setJoinPosition(null), []);
 
   if (id === null || result?.kind === 'not-found') {
     const count = result?.kind === 'not-found' ? result.groupCount : null;
@@ -183,7 +186,13 @@ export function GroupDetail({ idParam }: { idParam: string }) {
         <h3 id="slots-title" className="detail-subtitle">
           Payout slots
         </h3>
-        <SlotGrid group={group} token={token} slots={slots} account={wallet.account} />
+        <SlotGrid
+          group={group}
+          token={token}
+          slots={slots}
+          account={wallet.account}
+          onJoin={group.state === 'Open' ? setJoinPosition : undefined}
+        />
       </section>
 
       <section className="detail-section" aria-labelledby="meta-title">
@@ -207,6 +216,16 @@ export function GroupDetail({ idParam }: { idParam: string }) {
       </section>
 
       <MyPosition group={group} token={token} />
+
+      {joinPosition !== null && (
+        <JoinSlotDialog
+          group={group}
+          token={token}
+          position={joinPosition}
+          onClose={closeJoin}
+          onJoined={detail.refresh}
+        />
+      )}
     </article>
   );
 }

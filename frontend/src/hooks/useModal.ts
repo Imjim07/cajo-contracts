@@ -3,6 +3,10 @@ import { useEffect, type RefObject } from 'react';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Open modals, innermost last. Only the top one handles keys, so a dialog opened
+// over a sheet closes alone on Escape and keeps Tab to itself.
+const modalStack: HTMLElement[] = [];
+
 /**
  * Modal behaviour for sheets: traps Tab inside `ref`, closes on Escape, locks page
  * scroll, and returns focus to whatever was focused before opening.
@@ -13,6 +17,7 @@ export function useModal(ref: RefObject<HTMLElement | null>, open: boolean, onCl
     if (!open || !container) return;
 
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    modalStack.push(container);
     const root = document.documentElement;
     const previousOverflow = root.style.overflow;
     root.style.overflow = 'hidden';
@@ -21,6 +26,7 @@ export function useModal(ref: RefObject<HTMLElement | null>, open: boolean, onCl
     (container.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[0] ?? container).focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (modalStack[modalStack.length - 1] !== container) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onClose();
@@ -43,6 +49,7 @@ export function useModal(ref: RefObject<HTMLElement | null>, open: boolean, onCl
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
+      modalStack.splice(modalStack.indexOf(container), 1);
       root.style.overflow = previousOverflow;
       previouslyFocused?.focus();
     };

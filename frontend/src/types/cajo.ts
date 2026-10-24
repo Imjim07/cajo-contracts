@@ -89,3 +89,15 @@ export interface LandingStats {
   groupCount: bigint | null;
   feeBps: number | null;
 }
+
+/** Everything needed to decide whether a wallet can join a slot, read fresh before signing. */
+export interface JoinContext {
+  memberState: MemberState;
+  /** Current holder of the slot; the zero address when it is free. */
+  slotHolder: string;
+  deposit: bigint;
+  balance: bigint;
+  allowance: bigint;
+  /** Latest block timestamp in seconds: the clock the fill deadline is judged by. */
+  chainNow: bigint;
+}

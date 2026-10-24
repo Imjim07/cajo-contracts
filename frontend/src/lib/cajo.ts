@@ -8,6 +8,7 @@ import {
   type GroupRecord,
   type GroupState,
   type GroupSummary,
+  type JoinContext,
   type LandingStats,
   type MemberPosition,
   type MemberState,
@@ -266,4 +267,29 @@ export async function fetchMemberPosition(
     readCajo('withdrawable', [groupId, account], signal),
   ]);
   return { ...record, withdrawable: big(withdrawableResult, 0) };
+}
+
+export async function fetchJoinContext(
+  groupId: bigint,
+  position: number,
+  account: string,
+  tokenAddress: string,
+  signal: AbortSignal,
+): Promise<JoinContext> {
+  const [member, holder, deposit, balance, allowance, block] = await Promise.all([
+    fetchMemberRecord(groupId, account, signal),
+    readCajo('payoutOrder', [groupId, position], signal),
+    readCajo('slotDeposit', [groupId, position], signal),
+    read(tokenAddress, erc20, 'balanceOf', [account], signal),
+    read(tokenAddress, erc20, 'allowance', [account, CAJO_ADDRESS], signal),
+    limit(() => provider.getBlock('latest'), signal),
+  ]);
+  return {
+    memberState: member.state,
+    slotHolder: address(holder, 0),
+    deposit: big(deposit, 0),
+    balance: big(balance, 0),
+    allowance: big(allowance, 0),
+    chainNow: BigInt(block?.timestamp ?? Math.floor(Date.now() / 1000)),
+  };
 }

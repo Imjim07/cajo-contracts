@@ -37,7 +37,7 @@ function parseChainId(hex: string): number {
   return Number.parseInt(hex, 16);
 }
 
-/** Wallet state for the whole app. Read-only: it never sends transactions or touches keys. */
+/** Wallet state for the whole app. It never touches keys; transactions live in lib/cajoWrite.ts. */
 export function useWalletState(): Wallet {
   const [status, setStatus] = useState<WalletStatus>(() => (window.ethereum ? 'disconnected' : 'unavailable'));
   const [account, setAccount] = useState<string | null>(null);

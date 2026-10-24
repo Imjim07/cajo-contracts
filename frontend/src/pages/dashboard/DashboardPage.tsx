@@ -33,7 +33,7 @@ export function DashboardPage() {
           <h1 className="dash-title">Groups on BSC Testnet</h1>
         </div>
         <p className="readonly-banner" role="note">
-          Read-only preview. Joining and contributing are not available in this version.
+          Testnet preview. You can join an open slot; contributing and payouts come in a later version.
         </p>
       </div>
 

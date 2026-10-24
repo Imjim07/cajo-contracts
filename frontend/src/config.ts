@@ -30,6 +30,7 @@ export const CAJO_ADDRESS =
 export const EXPLORER_URL = 'https://testnet.bscscan.com';
 export const REPO_URL = 'https://github.com/Imjim07/cajo-contracts';
 export const METAMASK_DOWNLOAD_URL = 'https://metamask.io/download/';
+export const FAUCET_URL = 'https://www.bnbchain.org/en/testnet-faucet';
 
 export const MAX_FEE_BPS = 300;
 export const POLL_INTERVAL_MS = 15_000;
@@ -49,6 +50,10 @@ export function isAllowlistedToken(address: string): boolean {
 
 export function explorerAddressUrl(address: string): string {
   return `${EXPLORER_URL}/address/${address}`;
+}
+
+export function explorerTxUrl(hash: string): string {
+  return `${EXPLORER_URL}/tx/${hash}`;
 }
 
 export const CONTRACT_EXPLORER_URL = explorerAddressUrl(CAJO_ADDRESS);

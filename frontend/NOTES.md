@@ -48,6 +48,29 @@ or reviewer needs:
 posing as chain 97, seeded with an Open, an Active, a defaulted, a Completed and a Cancelled group. The app was
 checked against both, in headless Chrome at widths from 320 to 2560px.
 
+## Scope update: joining a slot
+
+After the read-only slice was done, I added one write flow, joining an open slot, so a demo can show a member
+entering a group from the UI instead of BscScan. Everything else (contribute, payouts, defaults, withdrawals) is
+still out of scope.
+
+Safety rules for the only two transactions the app sends:
+
+- **Exact approvals.** The app approves exactly the slot's deposit, never an unlimited amount, and skips the
+  approval when the deposit is 0.
+- **Re-check before signing.** The dialog re-reads the slot holder, the wallet's membership, its balance and
+  allowance, and the latest block time, and blocks with a reason instead of letting a doomed transaction through.
+- **Simulate before sending.** Each transaction runs as a `staticCall` first. A revert is decoded against the
+  contract's custom errors and OpenZeppelin's token errors, and shown as a sentence. MetaMask never opens for a
+  transaction that would fail.
+- **Unreadable tokens block joining.** A group whose "token" doesn't answer `decimals()` can't be joined. This
+  happened for real: testnet group #1 was created with a wallet address in the token field, so its deposits could
+  never transfer.
+
+Verified end to end on a local chain with real transactions: approve then join (allowance back to exactly 0
+afterwards), already a member, no balance, fill deadline passed, unreadable token, a rejected approval, and a race
+where the group filled between approval and join (stopped by simulation, so no join transaction was sent).
+
 ## Bugs fixed
 
 ### 1. Countdowns used the device clock; the contract uses block time
@@ -84,7 +107,13 @@ checked against both, in headless Chrome at widths from 320 to 2560px.
   the top, so the first scroll event wiped the hash the click had just set.
 - **Fix:** Clear the hash only after scrolling settles at the top.
 
-### 6. Layout bugs caught by width checks
+### 6. Escape closed two modals at once
+
+- **Cause:** On phones the join dialog opens on top of the group sheet. Both listened for Escape and Tab, so one
+  Escape closed both.
+- **Fix:** Open modals form a stack, and only the top one handles keys.
+
+### 7. Layout bugs caught by width checks
 
 - A 24px horizontal scroll at exactly 768px, where the full nav didn't fit.
 - Tablet connector lines in the hero visual pointed at empty space because of a CSS specificity conflict.

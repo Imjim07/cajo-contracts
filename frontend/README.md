@@ -1,10 +1,11 @@
 # CÀjọ frontend
 
 The web app for [CÀjọ](../README.md), a trustless rotating savings protocol (Ajo / Esusu / ROSCA) on BNB Smart Chain.
-It reads live data from the deployed contract and lets anyone inspect groups, rounds and payout slots.
+It reads live data from the deployed contract, lets anyone inspect groups, rounds and payout slots, and lets a
+connected wallet join an open slot.
 
 > **BSC Testnet only.** The contract is self-audited and not independently audited. Do not use real funds.
-> This version is **read-only**: it never sends a transaction.
+> The only transactions this app can send are an exact token approval and `joinGroup`.
 
 - Contract: [`0xc9d30A50579Fbd7aEDb48a4E7F02Eab56C3298b4`](https://testnet.bscscan.com/address/0xc9d30A50579Fbd7aEDb48a4E7F02Eab56C3298b4#readContract) (chain ID 97)
 - Stack: React 19, TypeScript (strict, no `any`), Vite, react-router, ethers v6, plain CSS with variables
@@ -49,6 +50,14 @@ and track the one in view.
 - Group detail: round progress, a timeline with a live countdown to the round deadline and default cutoff,
   every payout slot with its holder, payment status and deposit, the token and the creator.
 - **My position** (wallet connected): member state, slot, rounds paid, escrow, payout received, withdrawable.
+- **Join a slot** (wallet connected, group Open): see below.
+
+**Joining a slot.** Every open slot of an Open group has a "Join slot N" button. The dialog shows the deposit, the
+round you collect in, and your token balance, then runs two transactions: an `approve` for exactly the deposit
+(skipped when the deposit is 0) and `joinGroup`. Before anything is signed it re-reads the chain and blocks with a
+plain explanation if the slot is taken, the fill deadline has passed (by block time), the wallet already holds a
+slot, the balance is too low, or the group's token can't be read. Each transaction is simulated first, so contract
+errors such as `SlotTaken` or `WrongState` show as a sentence instead of a failed transaction.
 
 **Wallet**: MetaMask connect, wrong-network detection with a one-click switch to BSC Testnet (adds the network if
 the wallet doesn't know it), and clear messages for "no wallet", "request rejected" and "request already open".
@@ -94,7 +103,8 @@ src/
 
 ## What's next
 
-- Write flows: approve and join a slot, contribute, trigger a payout, remove a defaulter, withdraw, reclaim a deposit.
+- More write flows: contribute, trigger a payout, remove a defaulter, withdraw, reclaim a deposit, cancel an
+  unfilled group.
 - Group history from contract events (payouts, defaults, short payouts).
 - Batch reads with Multicall to cut RPC calls on large groups.
 - Unit tests for formatting, the limiter and the collateral maths.
