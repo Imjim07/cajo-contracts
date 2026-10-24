@@ -601,3 +601,8 @@ input[aria-invalid='true'] {
     transition-duration: 0.01ms !important;
   }
 }
+
+.callout-info {
+  background: var(--info-bg);
+  color: var(--info-ink);
+}

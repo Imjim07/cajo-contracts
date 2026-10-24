@@ -121,6 +121,8 @@ export function GroupDetail({ idParam }: { idParam: string }) {
   }
 
   const { group, token, slots, chainClockOffsetMs } = result;
+  // One slot per wallet: a wallet that already holds one gets no Join buttons.
+  const mySlot = wallet.account ? slots.find((slot) => slot.holder?.address === wallet.account) : undefined;
   const amount = (value: bigint) => formatTokenAmount(value, token);
 
   return (
@@ -186,12 +188,18 @@ export function GroupDetail({ idParam }: { idParam: string }) {
         <h3 id="slots-title" className="detail-subtitle">
           Payout slots
         </h3>
+        {group.state === 'Open' && mySlot && (
+          <p className="callout-inline callout-info">
+            Your wallet holds slot {mySlot.position}. Each wallet can join a group once, so to join another slot, switch
+            to a different account in MetaMask.
+          </p>
+        )}
         <SlotGrid
           group={group}
           token={token}
           slots={slots}
           account={wallet.account}
-          onJoin={group.state === 'Open' ? setJoinPosition : undefined}
+          onJoin={group.state === 'Open' && !mySlot ? setJoinPosition : undefined}
         />
       </section>
 
