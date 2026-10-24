@@ -1,0 +1,415 @@
+/* ---------- Page frame: fluid to the viewport, content capped by .container ---------- */
+
+.page {
+  padding:
+    max(var(--page-pad), env(safe-area-inset-top))
+    max(var(--page-pad), env(safe-area-inset-right))
+    max(var(--page-pad), env(safe-area-inset-bottom))
+    max(var(--page-pad), env(safe-area-inset-left));
+}
+
+.frame {
+  padding: var(--frame-pad);
+  border-radius: clamp(20px, 2vw, var(--radius-lg));
+  background: var(--bg-frame);
+  box-shadow: var(--shadow-soft);
+}
+
+.container {
+  width: 100%;
+  max-width: calc(var(--container) + 2 * var(--container-pad));
+  margin-inline: auto;
+  padding-inline: var(--container-pad);
+}
+
+/* Anchored sections land just below the floating navbar. */
+main section[id] {
+  scroll-margin-top: calc(var(--nav-height) + 16px);
+}
+
+main [tabindex='-1']:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---------- Navbar: a floating pill once the page scrolls ---------- */
+
+.navbar {
+  position: sticky;
+  top: max(8px, env(safe-area-inset-top));
+  z-index: 30;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  max-width: calc(var(--container) + 2 * var(--container-pad));
+  min-height: var(--nav-height);
+  margin: 0 auto var(--nav-gap);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+
+/* Surface and shadow are pseudo-elements so the scroll change animates with transform
+   and opacity only: the surface eases ~8px shorter, the shadow fades in. */
+.navbar::before,
+.navbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  transition:
+    transform var(--dur) var(--ease-out),
+    opacity var(--dur) var(--ease-out);
+}
+
+.navbar::before {
+  z-index: -1;
+  background: var(--bg-frame);
+}
+
+.navbar::after {
+  z-index: -2;
+  box-shadow: var(--shadow-lift);
+  opacity: 0;
+}
+
+.navbar.is-scrolled::before {
+  transform: scaleY(0.88);
+  background: rgba(255, 255, 255, 0.8);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.navbar.is-scrolled::after {
+  transform: scaleY(0.88);
+  opacity: 1;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 0 4px;
+  border-radius: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.brand-name {
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.nav-desktop,
+.nav-pill {
+  display: none;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.menu-toggle {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: var(--step--1);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.nav-link[aria-current='location'] {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  transform: scale(0.3);
+  transition:
+    opacity var(--dur) var(--ease-out),
+    transform var(--dur) var(--ease-out);
+}
+
+.nav-link[aria-current='location']::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (hover: hover) {
+  .nav-link:hover {
+    color: var(--ink);
+    background: var(--bg-subtle);
+  }
+}
+
+@media (max-width: 359px) {
+  .brand-name {
+    font-size: 1.125rem;
+  }
+  .nav-actions .btn {
+    padding: 0 12px;
+  }
+  .nav-actions .account-dot {
+    display: none;
+  }
+}
+
+@media (max-width: 1279px) {
+  .navbar .label-full {
+    display: none;
+  }
+  .navbar .label-short {
+    display: inline;
+  }
+}
+
+@media (min-width: 1024px) {
+  .navbar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: var(--space-4);
+    padding: 10px 10px 10px var(--space-4);
+  }
+  .nav-desktop {
+    display: block;
+    justify-self: center;
+  }
+  .nav-desktop .nav-list {
+    display: flex;
+    gap: 2px;
+  }
+  .nav-pill {
+    display: inline-flex;
+  }
+  .menu-toggle {
+    display: none;
+  }
+}
+
+/* ---------- Mobile / tablet menu sheet ---------- */
+
+.menu-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding:
+    max(var(--space-3), env(safe-area-inset-top))
+    max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-5), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
+  background: var(--bg-frame);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: sheet-in var(--dur) var(--ease-out);
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+.menu-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+}
+
+.menu-sheet .nav-list {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.menu-sheet .nav-link {
+  display: flex;
+  min-height: 56px;
+  padding: 0 var(--space-4) 0 var(--space-6);
+  border-radius: var(--radius-sm);
+  font-size: var(--step-2);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.menu-sheet .nav-link::after {
+  left: var(--space-4);
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0;
+}
+
+.menu-sheet-foot {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+@media (min-width: 640px) {
+  .menu-sheet-foot {
+    max-width: 420px;
+  }
+}
+
+/* ---------- Wallet message (anchored under the navbar, no layout shift) ---------- */
+
+.wallet-message-region {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: var(--space-2);
+  left: var(--space-2);
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.wallet-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 380px;
+  padding: 2px 2px 2px var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-frame);
+  box-shadow: var(--shadow-lift);
+  font-size: var(--step--1);
+  font-weight: 500;
+  pointer-events: auto;
+  animation: message-in var(--dur) var(--ease-out);
+}
+
+.wallet-message-info {
+  color: var(--ok-ink);
+}
+
+.wallet-message-error {
+  border-color: rgba(143, 29, 29, 0.2);
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* ---------- Footer ---------- */
+
+.footer {
+  margin-top: var(--frame-pad);
+  padding-block: clamp(32px, 5vw, 64px);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font-size: var(--step--1);
+}
+
+.footer-inner {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.footer-note {
+  margin-top: var(--space-2);
+  color: var(--muted);
+}
+
+.footer-heading {
+  margin-bottom: var(--space-2);
+  font-size: var(--step--1);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.footer-disclaimer p {
+  max-width: 60ch;
+  color: var(--muted);
+}
+
+.footer-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  color: var(--ink);
+  font-weight: 500;
+  text-underline-offset: 3px;
+}
+
+@media (min-width: 640px) {
+  .footer-inner {
+    grid-template-columns: 1fr 1fr;
+  }
+  .footer-disclaimer {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .footer-inner {
+    grid-template-columns: 1fr 1.6fr 1fr;
+  }
+  .footer-disclaimer {
+    grid-column: auto;
+    grid-row: auto;
+  }
+}
+
+/* ---------- Not found ---------- */
+
+.not-found {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  min-height: 50dvh;
+  align-content: center;
+  padding-block: var(--space-7);
+}
+
+.not-found h1 {
+  font-size: var(--step-3);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.not-found .button-row {
+  margin-top: var(--space-3);
+}

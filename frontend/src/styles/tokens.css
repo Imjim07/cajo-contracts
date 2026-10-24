@@ -1,0 +1,99 @@
+:root {
+  /* Surfaces */
+  --bg-page: #dfe5ee;
+  --bg-frame: #ffffff;
+  --bg-hero-from: #eef2f8;
+  --bg-hero-to: #e4ebf5;
+  --bg-subtle: #f4f6fa;
+  --bg-subtle-2: #eef1f6;
+
+  /* Text and accent (all text colours meet WCAG AA on white and on --bg-subtle) */
+  --ink: #0b1220;
+  --muted: #535d70;
+  --accent: #0e1730;
+  --accent-hover: #1d2a4d;
+  --on-accent: #ffffff;
+  --focus: #2f5bea;
+
+  /* Status */
+  --ok: #16a34a;
+  --ok-ink: #14532d;
+  --ok-bg: #e8f6ee;
+  --warn: #d97706;
+  --warn-ink: #7a4100;
+  --warn-bg: #fff3dc;
+  --danger: #dc2626;
+  --danger-ink: #8f1d1d;
+  --danger-bg: #fdecec;
+  --info-ink: #1e3a8a;
+  --info-bg: #e8eefc;
+
+  /* Lines and shadow */
+  --line: rgba(14, 23, 48, 0.09);
+  --line-strong: rgba(14, 23, 48, 0.18);
+  --shadow-soft: 0 1px 2px rgba(14, 23, 48, 0.04), 0 8px 28px rgba(14, 23, 48, 0.07);
+  --shadow-lift: 0 2px 4px rgba(14, 23, 48, 0.05), 0 14px 36px rgba(14, 23, 48, 0.1);
+
+  /* Shape */
+  --radius-lg: 28px;
+  --radius-md: 22px;
+  --radius-sm: 14px;
+  --radius-xs: 10px;
+  --radius-pill: 999px;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 72px;
+
+  /* Fluid type: 360px -> 1440px */
+  --step--1: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
+  --step-0: clamp(0.9375rem, 0.91rem + 0.15vw, 1rem);
+  --step-1: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+  --step-2: clamp(1.25rem, 1.12rem + 0.6vw, 1.625rem);
+  --step-3: clamp(1.625rem, 1.38rem + 1.1vw, 2.375rem);
+  --step-4: clamp(2.125rem, 1.4rem + 3.4vw, 4.375rem);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1);
+  --dur-fast: 150ms;
+  --dur: 220ms;
+  --dur-slow: 300ms;
+
+  /* Layout: backgrounds are fluid, content is capped by .container */
+  --page-pad: clamp(8px, 1.2vw, 20px);
+  --frame-pad: 8px;
+  --nav-gap: 8px;
+  --nav-height: 60px;
+  --container: 1360px;
+  --container-pad: clamp(16px, 4vw, 64px);
+  --section-space: clamp(64px, 9vw, 128px);
+  --tap: 44px;
+
+  --bg-section-alt: #f3f6fb;
+  --glass: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(14, 23, 48, 0.08);
+  --shadow-glass: 0 1px 1px rgba(14, 23, 48, 0.03), 0 4px 10px rgba(14, 23, 48, 0.04), 0 18px 40px rgba(14, 23, 48, 0.07);
+
+  --font: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (min-width: 640px) {
+  :root {
+    --frame-pad: 12px;
+    --nav-gap: 12px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --nav-height: 68px;
+  }
+}
