@@ -9,6 +9,7 @@ import {
 } from 'ethers';
 import { CAJO_ABI, ERC20_ABI } from '../abi';
 import { CAJO_ADDRESS, CHAIN } from '../config';
+import { fetchGasPrice } from './cajo';
 import { describeWalletError, isUserRejection } from './walletErrors';
 
 // The only transactions this app sends: an exact ERC-20 approval and joinGroup.
@@ -22,12 +23,20 @@ async function getSigner(): Promise<JsonRpcSigner> {
   return provider.getSigner();
 }
 
+// MetaMask's own fee suggestion on BSC Testnet can be many times the network price,
+// enough to show "insufficient funds" on a lightly funded test wallet. Passing the
+// RPC's gas price makes MetaMask default to what the network actually charges.
+async function gasOverrides(): Promise<{ gasPrice?: bigint }> {
+  const gasPrice = await fetchGasPrice();
+  return gasPrice ? { gasPrice } : {};
+}
+
 /** Approves exactly `amount`, never an unlimited allowance. Simulated first so a bad token fails before signing. */
 export async function sendApprove(tokenAddress: string, amount: bigint): Promise<ContractTransactionResponse> {
   const token = new Contract(tokenAddress, ERC20_ABI, await getSigner());
   const approve = token.getFunction('approve');
   await approve.staticCall(CAJO_ADDRESS, amount);
-  return approve.send(CAJO_ADDRESS, amount);
+  return approve.send(CAJO_ADDRESS, amount, await gasOverrides());
 }
 
 /** Simulates joinGroup first, so contract errors surface before MetaMask opens and cost no gas. */
@@ -35,7 +44,7 @@ export async function sendJoin(groupId: bigint, position: number): Promise<Contr
   const cajo = new Contract(CAJO_ADDRESS, CAJO_ABI, await getSigner());
   const join = cajo.getFunction('joinGroup');
   await join.staticCall(groupId, position);
-  return join.send(groupId, position);
+  return join.send(groupId, position, await gasOverrides());
 }
 
 export async function waitForSuccess(tx: ContractTransactionResponse): Promise<ContractTransactionReceipt> {

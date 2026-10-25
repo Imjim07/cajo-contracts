@@ -293,3 +293,12 @@ export async function fetchJoinContext(
     chainNow: BigInt(block?.timestamp ?? Math.floor(Date.now() / 1000)),
   };
 }
+
+/** The RPC's current gas price, or null if it can't be read. */
+export async function fetchGasPrice(): Promise<bigint | null> {
+  try {
+    return (await provider.getFeeData()).gasPrice;
+  } catch {
+    return null;
+  }
+}
