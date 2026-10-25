@@ -38,10 +38,12 @@ export const MAX_CONCURRENT_RPC = 5;
 export const RECENT_GROUP_LIMIT = 20;
 
 // Any ERC-20 can back a group. Tokens not listed here get a warning badge.
-// Keys are lowercase. Both verified on-chain (symbol + decimals) on BSC Testnet.
+// Keys are lowercase. All verified on-chain (symbol + decimals) on BSC Testnet.
 export const TOKEN_ALLOWLIST: Readonly<Record<string, string>> = {
   '0x337610d27c682e347c9cd60bd4b3b107c9d34ddd': 'USDT (BNB Chain testnet faucet)',
   '0xed24fc36d5ee211ea25a80239fb8c4cfd80f12ee': 'BUSD (BNB Chain testnet faucet)',
+  // Deployed by scripts/demoSetup.ts: the repo's MockUSDT (mintable test token), backing demo group #3.
+  '0x8eeaef54210eb230ffe0c17fba9021dc9bd7e535': 'CAjo demo token (MockUSDT, testnet only)',
 };
 
 export function isAllowlistedToken(address: string): boolean {
